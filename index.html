@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sweet, Sweet World</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="loading">
+  <h1>Sweet, Sweet World</h1>
+  <p>Generating candy world...</p>
+  <div id="loadbar-outer"><div id="loadbar-inner"></div></div>
+  <div id="load-text">Initializing...</div>
+</div>
+
+<div id="hud">
+  <div id="crosshair">+</div>
+  <div id="hearts"></div>
+  <div id="hunger"></div>
+  <div id="hotbar"></div>
+  <div id="effects"></div>
+  <div id="debug-info"></div>
+  <div id="pet-btn" title="Pets (P)">🐾</div>
+  <div id="quest-book-btn" title="Quests (Q)">📖</div>
+  <div id="creative-toggle" title="Toggle Creative Mode (C)">🎮 Survival</div>
+  <div id="mode-indicator" class="mode-indicator survival">Survival</div>
+  <div id="name-tags"></div>
+  <div id="quest-notification"></div>
+</div>
+
+<div id="inventory-overlay">
+  <div id="inventory-panel">
+    <div id="inv-main">
+      <h3>Inventory</h3>
+      <div id="inv-grid"></div>
+    </div>
+    <div id="crafting-panel">
+      <h3>Crafting</h3>
+      <div id="crafting-help" aria-label="Crafting help">
+        <p>Click a recipe to craft.</p>
+        <p>Ingredients can be anywhere in your inventory.</p>
+        <p>Bright recipes are ready. Dim recipes are missing ingredients.</p>
+      </div>
+      <div id="crafting-list"></div>
+    </div>
+  </div>
+</div>
+
+<div id="cursor-stack"></div>
+
+<div id="quest-overlay">
+  <div id="quest-panel">
+    <div id="quest-header">
+      <h3>Quest Book</h3>
+      <button id="quest-close" type="button">Close</button>
+    </div>
+    <div id="quest-list"></div>
+  </div>
+</div>
+
+<div id="trade-overlay">
+  <div id="trade-panel">
+    <h3 id="trade-title">Villager Trades</h3>
+    <div id="trade-list"></div>
+    <button id="trade-close" type="button">Close</button>
+  </div>
+</div>
+
+<canvas id="break-overlay" style="display:none;"></canvas>
+
+<div id="pet-overlay">
+  <div id="pet-panel">
+    <h3>My Pets</h3>
+    <div id="pet-list-empty">No tamed pets yet. Feed a treat to an animal!</div>
+    <div id="pet-list"></div>
+    <button id="pet-close" type="button">Close</button>
+  </div>
+</div>
+
+<div id="crafting-table-overlay">
+  <div id="crafting-table-panel">
+    <div id="crafting-table-header">
+      <h3>Crafting Table</h3>
+      <button id="crafting-table-close" type="button">Close</button>
+    </div>
+    <div id="crafting-table-help" aria-label="Crafting table help">
+      <p>Place ingredients on the table to craft advanced items.</p>
+      <p>Tools, treats, and decorative blocks require a Crafting Table.</p>
+    </div>
+    <div id="crafting-table-list"></div>
+  </div>
+</div>
+
+<div id="furnace-overlay">
+  <div id="furnace-panel">
+    <div id="furnace-header">
+      <h3>Furnace</h3>
+      <button id="furnace-close" type="button">Close</button>
+    </div>
+    <div id="furnace-help" aria-label="Furnace help">
+      <p>Smelt ores into ingots and gems.</p>
+      <p>Sand can be smelted into glass.</p>
+    </div>
+    <div id="furnace-list"></div>
+  </div>
+</div>
+
+<div id="controls-overlay">
+  <div id="controls-panel">
+    <div id="controls-header">
+      <h3>Controls</h3>
+      <button id="controls-close" type="button">Close</button>
+    </div>
+    <div id="controls-list">
+      <div class="control-section">
+        <div class="control-section-title">Movement</div>
+        <div class="control-row"><span class="control-key">W A S D</span><span class="control-action">Move</span></div>
+        <div class="control-row"><span class="control-key">Space</span><span class="control-action">Jump / Fly up</span></div>
+        <div class="control-row"><span class="control-key">Shift</span><span class="control-action">Sprint / Fly down</span></div>
+        <div class="control-row"><span class="control-key">Mouse</span><span class="control-action">Look around</span></div>
+      </div>
+      <div class="control-section">
+        <div class="control-section-title">Actions</div>
+        <div class="control-row"><span class="control-key">Left Click</span><span class="control-action">Mine / Break block</span></div>
+        <div class="control-row"><span class="control-key">Right Click</span><span class="control-action">Place block / Interact</span></div>
+        <div class="control-row"><span class="control-key">R</span><span class="control-action">Mine (hold)</span></div>
+        <div class="control-row"><span class="control-key">F</span><span class="control-action">Place block</span></div>
+      </div>
+      <div class="control-section">
+        <div class="control-section-title">Menus</div>
+        <div class="control-row"><span class="control-key">E</span><span class="control-action">Inventory</span></div>
+        <div class="control-row"><span class="control-key">T</span><span class="control-action">Trade with Villager</span></div>
+        <div class="control-row"><span class="control-key">Q</span><span class="control-action">Quest Book</span></div>
+        <div class="control-row"><span class="control-key">P</span><span class="control-action">Pet Panel</span></div>
+      </div>
+      <div class="control-section">
+        <div class="control-section-title">Modes</div>
+        <div class="control-row"><span class="control-key">C</span><span class="control-action">Creative Mode toggle</span></div>
+        <div class="control-row"><span class="control-key">Space ×2</span><span class="control-action">Fly Mode toggle</span></div>
+      </div>
+      <div class="control-section">
+        <div class="control-section-title">Hotbar</div>
+        <div class="control-row"><span class="control-key">1–9</span><span class="control-action">Select hotbar slot</span></div>
+        <div class="control-row"><span class="control-key">Scroll</span><span class="control-action">Cycle hotbar slot</span></div>
+      </div>
+      <div class="control-section">
+        <div class="control-section-title">Help</div>
+        <div class="control-row"><span class="control-key">H / ?</span><span class="control-action">Show/hide this panel</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="js/math.js?v=4"></script>
+<script src="js/noise.js?v=4"></script>
+<script src="js/blocks.js?v=4"></script>
+<script src="js/items.js?v=4"></script>
+<script src="js/state.js?v=4"></script>
+<script src="js/effects.js?v=4"></script>
+<script src="js/tools.js?v=4"></script>
+<script src="js/crafting.js?v=4"></script>
+<script src="js/quests.js?v=4"></script>
+<script src="js/mobs.js?v=4"></script>
+<script src="js/webgl.js?v=4"></script>
+<script src="js/world.js?v=4"></script>
+<script src="js/persistence.js?v=4"></script>
+<script src="js/player.js?v=4"></script>
+<script src="js/input.js?v=4"></script>
+<script src="js/render.js?v=4"></script>
+<script src="js/main.js?v=4"></script>
+</body>
+</html>

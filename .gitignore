@@ -1,0 +1,53 @@
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+
+# Editors and IDEs
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+*~
+.history/
+
+# LLM / AI tooling
+.claude/
+.aider*
+.continue/
+.copilot/
+.playwright-mcp/
+AUDIT_REPORT.md
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Dependencies and package-manager caches
+node_modules/
+.npm/
+.pnpm-store/
+
+# Build, coverage, and source maps
+dist/
+build/
+coverage/
+.nyc_output/
+*.map
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Temporary files
+tmp/
+temp/
+.cache/
