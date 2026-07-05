@@ -88,26 +88,6 @@ function getMobRenderSize(mob) {
     return size;
 }
 
-function pushMobCuboid(x0, y0, z0, x1, y1, z1, c) {
-    ensureMobCapacity(6 * 6 * 7);
-    const r = c[0], g = c[1], b = c[2];
-    for(let f = 0; f < 6; f++) {
-        const face = MOB_FACE_DEFS[f];
-        const corners = face.corners;
-        const n = face.nIdx;
-        for(let ti = 0; ti < 6; ti++) {
-            const corner = corners[MOB_TRI_INDICES[ti]];
-            mobVertBuffer[mobVertCount++] = corner[0] ? x1 : x0;
-            mobVertBuffer[mobVertCount++] = corner[1] ? y1 : y0;
-            mobVertBuffer[mobVertCount++] = corner[2] ? z1 : z0;
-            mobVertBuffer[mobVertCount++] = r;
-            mobVertBuffer[mobVertCount++] = g;
-            mobVertBuffer[mobVertCount++] = b;
-            mobVertBuffer[mobVertCount++] = n;
-        }
-    }
-}
-
 // pushMobPart: local-space cuboid relative to mob position, rotated by mob.yaw (+ optional headYaw for head parts).
 // This is the key fix: animals now face their movement direction instead of sliding sideways.
 function pushMobPart(mob, lx0, ly0, lz0, lx1, ly1, lz1, color, headYawOffset = 0) {
@@ -146,13 +126,6 @@ function pushMobPart(mob, lx0, ly0, lz0, lx1, ly1, lz1, color, headYawOffset = 0
             mobVertBuffer[mobVertCount++] = n;
         }
     }
-}
-
-function getWalkSwing(mob, scale) {
-    // Updated to use per-mob animTime for continuous smooth cycles (no snap on state change)
-    if (!mob || (mob.state !== 'wander' && mob.state !== 'follow')) return 0;
-    const t = mob.animTime || (game.gameTime * 5.5);
-    return Math.sin(t * 5.8) * scale * 0.09;
 }
 
 function variantSeed(mob, salt) {
