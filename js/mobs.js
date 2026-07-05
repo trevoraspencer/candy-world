@@ -1291,10 +1291,13 @@ function findTargetMob(maxDist) {
             best = { mob, dist, dot };
         }
     }
-    // If no directional match, check for any animal within 2.5 blocks (closest)
+    // If no directional match, check for any untamed animal within 2.5 blocks (closest).
+    // Only tameable mobs qualify here — otherwise a nearby tamed pet, villager, or
+    // warden would swallow the action and make treats impossible to eat (see input.js).
     if (!best) {
         let closestDist = 2.5;
         for (const mob of game.mobs) {
+            if (!isAnimalMob(mob.type) || mob.tamed) continue;
             const dx = mob.x - camX;
             const dz = mob.z - camZ;
             const dist = Math.sqrt(dx * dx + dz * dz);
