@@ -148,13 +148,6 @@ function pushMobPart(mob, lx0, ly0, lz0, lx1, ly1, lz1, color, headYawOffset = 0
     }
 }
 
-function getWalkSwing(mob, scale) {
-    // Updated to use per-mob animTime for continuous smooth cycles (no snap on state change)
-    if (!mob || (mob.state !== 'wander' && mob.state !== 'follow')) return 0;
-    const t = mob.animTime || (game.gameTime * 5.5);
-    return Math.sin(t * 5.8) * scale * 0.09;
-}
-
 function variantSeed(mob, salt) {
     const v = mob.variant != null ? mob.variant : 0.5;
     return ((v * 997.0 + salt * 0.131) % 1 + 1) % 1;
