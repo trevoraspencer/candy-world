@@ -95,7 +95,11 @@ function render(now) {
             const toolMult = heldItem ? getToolMultiplier(heldItem.id, game.targetBlock.block) : 0.5;
             game.breakProgress += dt / (hardness / toolMult);
             if(game.breakProgress >= 1.0) {
-                if(addItem(game.targetBlock.block, 1)) {
+                // Creative mode: break the block without collecting the drop.
+                // The creative inventory is always full (every slot a max stack,
+                // and placement never decrements), so addItem() would always
+                // fail and no block could ever be broken.
+                if(game.creativeMode || addItem(game.targetBlock.block, 1)) {
                     setBlock(game.targetBlock.x, game.targetBlock.y, game.targetBlock.z, AIR);
                     updateHotbar();
                 }
