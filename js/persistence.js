@@ -270,6 +270,7 @@ function saveGameNow() {
 
     try {
         localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+        game.saveErrored = false; // clear the HUD warning once a save succeeds
     } catch (err) {
         console.warn('Failed to save game:', err);
         saveDirty = true; // remain dirty so we retry next change
