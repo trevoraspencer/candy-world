@@ -142,7 +142,7 @@ function generateChunk(cx, cz) {
                 else if(y < h - 4) block = stoneBlock;
                 else if(y < h) block = filler;
                 else if(y === h) block = surface;
-                else if(y <= WATER_LEVEL && block === AIR) block = WATER;
+                else if(y <= WATER_LEVEL) block = WATER;
 
                 // Ores (only in stone)
                 if(block === STONE || block === DARK_STONE) {

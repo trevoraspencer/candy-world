@@ -529,7 +529,7 @@ function populateCreativeInventory() {
     let creativeItems = [];
     // Add all blocks (IDs 1-32, excluding AIR=0 and WATER=5)
     for (let id = 1; id <= 32; id++) {
-        if (id === 0 || id === 5) continue; // Skip AIR and WATER
+        if (id === 5) continue; // Skip WATER (AIR=0 is already outside the loop range)
         if (!BLOCK_TILES[id]) continue; // Skip blocks without tiles
         creativeItems.push({ id: id, count: 64 });
     }

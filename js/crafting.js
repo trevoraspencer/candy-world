@@ -77,7 +77,8 @@ let craftedFeedbackTimer = null;
 
 function countItem(id) {
     let total = 0;
-    for (let i = 0; i < 36; i++) {
+    // Iterate the live length: creative mode grows game.inventory beyond 36 slots.
+    for (let i = 0; i < game.inventory.length; i++) {
         if (game.inventory[i] && game.inventory[i].id === id) total += game.inventory[i].count;
     }
     return total;
@@ -85,7 +86,8 @@ function countItem(id) {
 
 function removeItem(id, count) {
     let remaining = count;
-    for (let i = 0; i < 36; i++) {
+    // Iterate the live length: creative mode grows game.inventory beyond 36 slots.
+    for (let i = 0; i < game.inventory.length; i++) {
         if (game.inventory[i] && game.inventory[i].id === id) {
             const take = Math.min(remaining, game.inventory[i].count);
             game.inventory[i].count -= take;

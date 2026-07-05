@@ -1,6 +1,9 @@
 'use strict';
 
-const SAVE_KEY = '***********************';
+const SAVE_KEY = 'candy-world-save-v2';
+// Older builds stored the save under this accidental all-asterisks key.
+// loadSavedGame() migrates it to SAVE_KEY once, so existing saves survive.
+const LEGACY_SAVE_KEY = '***********************';
 const CURRENT_SAVE_VERSION = 2;
 let saveTimer = null;
 let loadedSave = null;
@@ -83,7 +86,21 @@ function sanitizePetName(name, type) {
 
 function loadSavedGame() {
     try {
-        const raw = localStorage.getItem(SAVE_KEY);
+        let raw = localStorage.getItem(SAVE_KEY);
+        if (raw === null) {
+            const legacyRaw = localStorage.getItem(LEGACY_SAVE_KEY);
+            if (legacyRaw !== null) {
+                raw = legacyRaw;
+                // One-time migration: copy to the new key, then drop the old one.
+                // If the copy fails (e.g. quota), keep the legacy key so nothing is lost.
+                try {
+                    localStorage.setItem(SAVE_KEY, legacyRaw);
+                    localStorage.removeItem(LEGACY_SAVE_KEY);
+                } catch (migrateErr) {
+                    console.warn('Failed to migrate save to new storage key:', migrateErr);
+                }
+            }
+        }
         const parsed = raw ? JSON.parse(raw) : null;
         loadedSave = isSaveObject(parsed) ? parsed : null;
         if (loadedSave) {
@@ -253,6 +270,7 @@ function saveGameNow() {
 
     try {
         localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+        game.saveErrored = false; // clear the HUD warning once a save succeeds
     } catch (err) {
         console.warn('Failed to save game:', err);
         saveDirty = true; // remain dirty so we retry next change

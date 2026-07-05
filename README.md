@@ -22,9 +22,11 @@ No build step, no dependencies, fully offline — just open the file and play.
   non-depleting inventory, survival inventory restore, and saved mode
 - Quest Book with 10 kid-friendly quests, progress tracking, rewards,
   a HUD icon, and `Q` shortcut
-- Day/night cycle, hunger, health, particles, status effects
+- Day/night cycle, particles, status effects, and hunger/health meters
+  (cosmetic for now — eating treats refills them, but nothing drains
+  hunger or deals damage yet)
 - Save/load via `localStorage` (saved automatically as you play) with versioned format and migration support
-- Built-in performance instrumentation (frame timing via `performance.mark`/`measure`, logged every 60 frames)
+- Built-in performance instrumentation (frame timing via `performance.mark`/`measure`; console logging is off by default — set `ENABLE_PERF_LOGS = true` in `js/render.js` to print a summary every 60 frames)
 
 ## Running it
 

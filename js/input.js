@@ -139,6 +139,7 @@ document.addEventListener('keydown', (e) => {
     if(e.code === 'KeyE') {
         e.preventDefault();
         game.miningKeyHeld = false;
+        if(game.controlsOverlayOpen) return; // don't open inventory under the controls overlay
         if(game.craftingTableOpen) { closeCraftingTableUI(); return; }
         if(game.furnaceOpen) { closeFurnaceUI(); return; }
         if(game.questPanelOpen) { toggleQuestPanel(); return; }
@@ -151,7 +152,7 @@ document.addEventListener('keydown', (e) => {
     }
     if(e.code === 'KeyQ' && !e.repeat) {
         e.preventDefault();
-        if(game.inventoryOpen || game.tradeTarget) return;
+        if(game.inventoryOpen || game.tradeTarget || game.craftingTableOpen || game.furnaceOpen || game.controlsOverlayOpen) return;
         if(game.petPanelOpen) { togglePetPanel(); return; }
         toggleQuestPanel();
     }
@@ -161,10 +162,14 @@ document.addEventListener('keydown', (e) => {
     }
     if(e.code === 'KeyH' && !e.repeat) {
         e.preventDefault();
+        // Allow closing the overlay, but never open it on top of another panel
+        // (its close path would re-lock the pointer under the remaining modal).
+        if(!game.controlsOverlayOpen && gameInputBlocked) return;
         toggleControlsOverlay();
     }
     if(e.code === 'Slash' && e.shiftKey && !e.repeat) {
         e.preventDefault();
+        if(!game.controlsOverlayOpen && gameInputBlocked) return;
         toggleControlsOverlay();
     }
     if(e.code >= 'Digit1' && e.code <= 'Digit9' && !gameInputBlocked) {
@@ -178,7 +183,7 @@ document.addEventListener('keyup', (e) => {
 });
 
 game.canvas.addEventListener('mousedown', (e) => {
-    if(!game.pointerLocked && !game.inventoryOpen && !game.tradeTarget && !game.petPanelOpen && !game.craftingTableOpen && !game.furnaceOpen && !game.controlsOverlayOpen) {
+    if(!game.pointerLocked && !game.inventoryOpen && !game.tradeTarget && !game.petPanelOpen && !game.questPanelOpen && !game.craftingTableOpen && !game.furnaceOpen && !game.controlsOverlayOpen) {
         e.preventDefault();
         if(isSecondaryActionEvent(e)) {
             game.mouseDown[2] = true;
@@ -192,7 +197,7 @@ game.canvas.addEventListener('mousedown', (e) => {
 });
 
 document.addEventListener('mousedown', (e) => {
-    if(!game.pointerLocked || game.inventoryOpen || game.tradeTarget || game.petPanelOpen || game.craftingTableOpen || game.furnaceOpen || game.controlsOverlayOpen) return;
+    if(!game.pointerLocked || game.inventoryOpen || game.tradeTarget || game.petPanelOpen || game.questPanelOpen || game.craftingTableOpen || game.furnaceOpen || game.controlsOverlayOpen) return;
 
     if(isSecondaryActionEvent(e)) {
         e.preventDefault();

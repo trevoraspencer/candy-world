@@ -88,7 +88,7 @@ const game = {
 
     // Quest state (from quests.js)
     questPanelOpen: false,
-    visitedBiomes: [], // array of distinct biome IDs visited this session
+    visitedBiomes: [], // array of distinct biome IDs visited (persisted across sessions)
     pendingQuestRewards: [], // rewards that couldn't be added to full inventory
 
     // Block station UI state (furnace/crafting table)
