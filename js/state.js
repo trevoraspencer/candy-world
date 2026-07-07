@@ -42,6 +42,12 @@ const game = {
     },
     playerHealth: 20, // 0-20, displayed as 10 hearts
     playerHunger: 20, // 0-20, displayed as 10 icons
+    survival: {
+        hungerDrain: 0,
+        regenTimer: 0,
+        crashTimer: 0,
+        noticeCooldown: 0
+    },
     selectedSlot: 0,
     inventoryOpen: false,
     cursorStack: null, // for inventory drag
@@ -96,6 +102,7 @@ const game = {
     craftingTablePos: null, // {x, y, z} of the placed Crafting Table block
     furnaceOpen: false,
     furnacePos: null, // {x, y, z} of the placed Furnace block
+    recipeGuide: null, // { category, recipeIndex } for the tracked recipe helper
 
     // Render loop state (from render.js)
     lastTime: 0,
@@ -104,6 +111,17 @@ const game = {
     // Controls overlay state
     controlsOverlayOpen: false,
 
+    // First-run and contextual HUD helper state (from render.js)
+    actionHelper: {
+        pointerLockedOnce: false,
+        movementSeen: false,
+        actionSeen: false,
+        lastTitle: '',
+        lastDetail: '',
+        lastKind: ''
+    },
+
     // Persistence state (from persistence.js)
-    saveErrored: false
+    saveErrored: false,
+    saveDiagnostics: null
 };

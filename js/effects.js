@@ -47,6 +47,17 @@ const EFFECT_SPEED = 'speed';
 const EFFECT_SPARKLE = 'sparkle';
 const EFFECT_JUMP = 'jump';
 
+const SURVIVAL_LOW_ENERGY_HUNGER = 6;
+const SURVIVAL_WELL_FED_HUNGER = 18;
+const SURVIVAL_MIN_HEALTH = 6;
+const SURVIVAL_WALK_HUNGER_DRAIN = 0.018;
+const SURVIVAL_SPRINT_HUNGER_DRAIN = 0.035;
+const SURVIVAL_MINING_HUNGER_DRAIN = 0.025;
+const SURVIVAL_JUMP_HUNGER_COST = 0.18;
+const SURVIVAL_HEAL_INTERVAL = 7;
+const SURVIVAL_CRASH_INTERVAL = 8;
+const SURVIVAL_NOTICE_INTERVAL = 14;
+
 function addEffect(type, duration) {
     const idx = game.activeEffects.findIndex(e => e.type === type);
     if (idx >= 0) game.activeEffects.splice(idx, 1);
@@ -55,6 +66,134 @@ function addEffect(type, duration) {
 
 function hasEffect(type) {
     return game.activeEffects.some(e => e.type === type);
+}
+
+// ====== GENTLE SURVIVAL LOOP ======
+function clampPlayerMeter(value) {
+    return Math.max(0, Math.min(20, value));
+}
+
+function showSurvivalNotice(message) {
+    if (game.survival.noticeCooldown > 0) return;
+    if (typeof showQuestNotification === 'function') showQuestNotification(message);
+    game.survival.noticeCooldown = SURVIVAL_NOTICE_INTERVAL;
+}
+
+function setPlayerHealth(value) {
+    const next = clampPlayerMeter(value);
+    if (Math.abs(next - game.playerHealth) < 0.001) return false;
+    game.playerHealth = next;
+    if (typeof updateHearts === 'function') updateHearts();
+    if (typeof scheduleSaveGame === 'function') scheduleSaveGame();
+    return true;
+}
+
+function setPlayerHunger(value) {
+    const previous = game.playerHunger;
+    const next = clampPlayerMeter(value);
+    if (Math.abs(next - previous) < 0.001) return false;
+
+    game.playerHunger = next;
+    if (typeof updateHunger === 'function') updateHunger();
+    if (typeof scheduleSaveGame === 'function') scheduleSaveGame();
+
+    if (!game.creativeMode && previous > SURVIVAL_LOW_ENERGY_HUNGER && next <= SURVIVAL_LOW_ENERGY_HUNGER && next > 0) {
+        showSurvivalNotice('Energy is getting low. A treat will help!');
+    } else if (!game.creativeMode && previous > 0 && next <= 0) {
+        showSurvivalNotice('Sugar crash! Find a treat to bounce back.');
+    }
+    return true;
+}
+
+function restorePlayerHealth(amount) {
+    setPlayerHealth(game.playerHealth + amount);
+}
+
+function restorePlayerHunger(amount) {
+    game.survival.hungerDrain = 0;
+    setPlayerHunger(game.playerHunger + amount);
+}
+
+function isSurvivalMeterActive() {
+    return game.worldLoaded && !game.creativeMode && !game.flyMode;
+}
+
+function isGameplayInputBlocked() {
+    return game.inventoryOpen || game.tradeTarget || game.petPanelOpen || game.questPanelOpen ||
+        game.craftingTableOpen || game.furnaceOpen || game.controlsOverlayOpen;
+}
+
+function consumePlayerHunger(amount) {
+    if (!isSurvivalMeterActive() || amount <= 0 || game.playerHunger <= 0) return;
+    game.survival.hungerDrain += amount;
+    if (game.survival.hungerDrain < 1) return;
+
+    const hungerLost = Math.floor(game.survival.hungerDrain);
+    game.survival.hungerDrain -= hungerLost;
+    setPlayerHunger(game.playerHunger - hungerLost);
+}
+
+function addSurvivalExertion(amount) {
+    consumePlayerHunger(amount);
+}
+
+function canSurvivalSprint() {
+    return game.creativeMode || game.flyMode || game.playerHunger > SURVIVAL_LOW_ENERGY_HUNGER;
+}
+
+function getSurvivalMovementSpeedMultiplier() {
+    if (game.creativeMode || game.flyMode) return 1;
+    if (game.playerHunger <= 0) return 0.8;
+    if (game.playerHunger <= SURVIVAL_LOW_ENERGY_HUNGER) return 0.92;
+    return 1;
+}
+
+function updateSurvival(dt) {
+    if (!game.worldLoaded) return;
+
+    game.survival.noticeCooldown = Math.max(0, game.survival.noticeCooldown - dt);
+
+    if (!isSurvivalMeterActive()) {
+        game.survival.regenTimer = 0;
+        game.survival.crashTimer = 0;
+        return;
+    }
+
+    if (isGameplayInputBlocked()) return;
+
+    const moving = game.keys['KeyW'] || game.keys['ArrowUp'] ||
+        game.keys['KeyS'] || game.keys['ArrowDown'] ||
+        game.keys['KeyA'] || game.keys['ArrowLeft'] ||
+        game.keys['KeyD'] || game.keys['ArrowRight'];
+    const sprinting = moving && canSurvivalSprint() && (game.keys['ShiftLeft'] || game.keys['ShiftRight']);
+    const mining = (game.miningKeyHeld || (game.mouseDown[0] && game.pointerLocked)) && game.targetBlock;
+
+    let drain = 0;
+    if (moving) drain += SURVIVAL_WALK_HUNGER_DRAIN;
+    if (sprinting) drain += SURVIVAL_SPRINT_HUNGER_DRAIN;
+    if (mining) drain += SURVIVAL_MINING_HUNGER_DRAIN;
+    consumePlayerHunger(drain * dt);
+
+    if (game.playerHunger >= SURVIVAL_WELL_FED_HUNGER && game.playerHealth < 20) {
+        game.survival.regenTimer += dt;
+        if (game.survival.regenTimer >= SURVIVAL_HEAL_INTERVAL) {
+            game.survival.regenTimer = 0;
+            restorePlayerHealth(1);
+        }
+    } else {
+        game.survival.regenTimer = 0;
+    }
+
+    if (game.playerHunger <= 0 && game.playerHealth > SURVIVAL_MIN_HEALTH) {
+        game.survival.crashTimer += dt;
+        if (game.survival.crashTimer >= SURVIVAL_CRASH_INTERVAL) {
+            game.survival.crashTimer = 0;
+            setPlayerHealth(Math.max(SURVIVAL_MIN_HEALTH, game.playerHealth - 1));
+            showSurvivalNotice('Sugar crash! Find a treat to bounce back.');
+        }
+    } else {
+        game.survival.crashTimer = 0;
+    }
 }
 
 // ====== PARTICLE SYSTEM (Wave 3) ======
@@ -80,6 +219,8 @@ function updateParticles(dt) {
 }
 
 function updateEffects(dt) {
+    updateSurvival(dt);
+
     for (let i = game.activeEffects.length - 1; i >= 0; i--) {
         game.activeEffects[i].timeRemaining -= dt;
         if (game.activeEffects[i].timeRemaining <= 0) game.activeEffects.splice(i, 1);

@@ -1504,19 +1504,19 @@ function updateNameTags(vp) {
 function eatTreat(treatId) {
     switch (treatId) {
         case ITEM_CUPCAKE:
-            game.playerHealth = Math.min(20, game.playerHealth + 6);
-            game.playerHunger = Math.min(20, game.playerHunger + 4);
+            restorePlayerHealth(6);
+            restorePlayerHunger(4);
             break;
         case ITEM_COOKIE:
-            game.playerHunger = Math.min(20, game.playerHunger + 2);
+            restorePlayerHunger(2);
             addEffect(EFFECT_SPEED, 10);
             break;
         case ITEM_CANDY:
-            game.playerHunger = Math.min(20, game.playerHunger + 1);
+            restorePlayerHunger(1);
             addEffect(EFFECT_SPARKLE, 15);
             break;
         case ITEM_LOLLIPOP:
-            game.playerHunger = Math.min(20, game.playerHunger + 3);
+            restorePlayerHunger(3);
             addEffect(EFFECT_JUMP, 20);
             break;
     }
@@ -1528,6 +1528,4 @@ function eatTreat(treatId) {
             [1.0, 0.41, 0.71, 1.0], 0.5 + Math.random()*0.5
         );
     }
-    updateHearts();
-    updateHunger();
 }

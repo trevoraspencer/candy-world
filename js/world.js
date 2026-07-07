@@ -272,6 +272,235 @@ function generateTrees() {
     }
 }
 
+// ====== LANDMARK GENERATION ======
+const WAYSTONE_SECTOR_SIZE = 64;
+const WAYSTONE_MARGIN = 12;
+const WAYSTONE_RADIUS = 4;
+const WAYSTONE_SPAWN_CLEAR_RADIUS = 26;
+
+function getHighestSolidY(wx, wz) {
+    for(let y = CHUNK_H - 2; y >= 1; y--) {
+        if(isSolid(getBlock(wx, y, wz))) return y;
+    }
+    return -1;
+}
+
+function isWaystoneSurfaceBlock(block) {
+    return block === GRASS || block === SAND || block === SNOW || block === DARK_GRASS ||
+        block === DIRT || block === STONE || block === DARK_STONE;
+}
+
+function getWaystonePalette(biome) {
+    switch(biome) {
+        case BIOME_FOREST:
+            return {
+                floor: PLANKS,
+                foundation: DIRT,
+                rim: CANDY_CANE_PILLAR,
+                pillar: CANDY_CANE_PILLAR,
+                accent: LEAVES,
+                cap: LEAVES,
+                highlight: FROSTING_WHITE,
+                sparkle: SPRINKLE,
+                rewards: [IRON_ORE, SUGAR_BLOCK, CANDY_CANE, FROSTING_PINK]
+            };
+        case BIOME_MOUNTAINS:
+            return {
+                floor: SNOW,
+                foundation: STONE,
+                rim: GLASS,
+                pillar: LOLLIPOP_STICK,
+                accent: FROSTING_WHITE,
+                cap: LOLLIPOP_TOP,
+                highlight: SNOW,
+                sparkle: GOLD_ORE,
+                rewards: [GOLD_ORE, LAPIS_ORE, IRON_ORE, GLASS]
+            };
+        case BIOME_DEEP_DARK:
+            return {
+                floor: DARK_STONE,
+                foundation: DARK_STONE,
+                rim: MUSHROOM_STALK,
+                pillar: MUSHROOM_STALK,
+                accent: MUSHROOM_CAP,
+                cap: MUSHROOM_CAP,
+                highlight: FROSTING_PINK,
+                sparkle: REDSTONE_ORE,
+                rewards: [REDSTONE_ORE, LAPIS_ORE, DIAMOND_ORE, FROSTING_BROWN]
+            };
+        case BIOME_BEACH:
+            return {
+                floor: SUGAR_BLOCK,
+                foundation: SAND,
+                rim: GLASS,
+                pillar: CANDY_CANE_PILLAR,
+                accent: FROSTING_PINK,
+                cap: FROSTING_WHITE,
+                highlight: GLASS,
+                sparkle: GOLD_ORE,
+                rewards: [GOLD_ORE, SUGAR_BLOCK, GLASS, FROSTING_WHITE]
+            };
+        case BIOME_PLAINS:
+        default:
+            return {
+                floor: FROSTING_WHITE,
+                foundation: DIRT,
+                rim: LOLLIPOP_STICK,
+                pillar: LOLLIPOP_STICK,
+                accent: LOLLIPOP_TOP,
+                cap: LOLLIPOP_TOP,
+                highlight: FROSTING_PINK,
+                sparkle: SUGAR_BLOCK,
+                rewards: [SUGAR_BLOCK, SPRINKLE, IRON_ORE, CANDY_CANE]
+            };
+    }
+}
+
+function canPlaceWaystone(wx, wz, spawnX, spawnZ) {
+    if(wx < WAYSTONE_MARGIN || wx >= WORLD_W - WAYSTONE_MARGIN ||
+       wz < WAYSTONE_MARGIN || wz >= WORLD_D - WAYSTONE_MARGIN) return null;
+
+    const dxSpawn = wx - spawnX;
+    const dzSpawn = wz - spawnZ;
+    if(dxSpawn * dxSpawn + dzSpawn * dzSpawn < WAYSTONE_SPAWN_CLEAR_RADIUS * WAYSTONE_SPAWN_CLEAR_RADIUS) {
+        return null;
+    }
+
+    let minY = CHUNK_H;
+    let maxY = -1;
+    for(let dz = -WAYSTONE_RADIUS; dz <= WAYSTONE_RADIUS; dz++) {
+        for(let dx = -WAYSTONE_RADIUS; dx <= WAYSTONE_RADIUS; dx++) {
+            if(dx * dx + dz * dz > WAYSTONE_RADIUS * WAYSTONE_RADIUS) continue;
+            const sx = wx + dx;
+            const sz = wz + dz;
+            const surfaceY = getHighestSolidY(sx, sz);
+            if(surfaceY <= WATER_LEVEL || surfaceY >= CHUNK_H - 14) return null;
+            if(!isWaystoneSurfaceBlock(getBlock(sx, surfaceY, sz))) return null;
+            if(getBlock(sx, surfaceY + 1, sz) !== AIR) return null;
+            minY = Math.min(minY, surfaceY);
+            maxY = Math.max(maxY, surfaceY);
+        }
+    }
+
+    if(maxY - minY > 2) return null;
+    const baseY = maxY + 1;
+    if(baseY + 13 >= CHUNK_H) return null;
+
+    for(let dz = -WAYSTONE_RADIUS; dz <= WAYSTONE_RADIUS; dz++) {
+        for(let dx = -WAYSTONE_RADIUS; dx <= WAYSTONE_RADIUS; dx++) {
+            if(dx * dx + dz * dz > WAYSTONE_RADIUS * WAYSTONE_RADIUS) continue;
+            const sx = wx + dx;
+            const sz = wz + dz;
+            const surfaceY = getHighestSolidY(sx, sz);
+            for(let y = surfaceY + 1; y <= baseY + 13; y++) {
+                if(getBlock(sx, y, sz) !== AIR) return null;
+            }
+        }
+    }
+
+    return { x: wx, z: wz, baseY, biome: getBiome(wx, wz) };
+}
+
+function findWaystoneSite(sectorX, sectorZ, spawnX, spawnZ) {
+    const minX = sectorX * WAYSTONE_SECTOR_SIZE + WAYSTONE_MARGIN;
+    const minZ = sectorZ * WAYSTONE_SECTOR_SIZE + WAYSTONE_MARGIN;
+    const maxX = Math.min((sectorX + 1) * WAYSTONE_SECTOR_SIZE - WAYSTONE_MARGIN - 1, WORLD_W - WAYSTONE_MARGIN - 1);
+    const maxZ = Math.min((sectorZ + 1) * WAYSTONE_SECTOR_SIZE - WAYSTONE_MARGIN - 1, WORLD_D - WAYSTONE_MARGIN - 1);
+    if(minX > maxX || minZ > maxZ) return null;
+
+    for(let attempt = 0; attempt < 40; attempt++) {
+        const rx = hash2D(sectorX * 211 + attempt * 17 + 31, sectorZ * 293 + attempt * 19 + 47);
+        const rz = hash2D(sectorX * 307 + attempt * 23 + 59, sectorZ * 197 + attempt * 29 + 83);
+        const wx = Math.floor(minX + rx * (maxX - minX + 1));
+        const wz = Math.floor(minZ + rz * (maxZ - minZ + 1));
+        const site = canPlaceWaystone(wx, wz, spawnX, spawnZ);
+        if(site) return site;
+    }
+
+    return null;
+}
+
+function placeWaystonePlatform(wx, wz, baseY, palette) {
+    for(let dz = -WAYSTONE_RADIUS; dz <= WAYSTONE_RADIUS; dz++) {
+        for(let dx = -WAYSTONE_RADIUS; dx <= WAYSTONE_RADIUS; dx++) {
+            const distSq = dx * dx + dz * dz;
+            if(distSq > WAYSTONE_RADIUS * WAYSTONE_RADIUS) continue;
+
+            const sx = wx + dx;
+            const sz = wz + dz;
+            const surfaceY = getHighestSolidY(sx, sz);
+            for(let y = surfaceY + 1; y < baseY; y++) {
+                setBlock(sx, y, sz, palette.foundation);
+            }
+
+            const edge = distSq > 10 || Math.abs(dx) === WAYSTONE_RADIUS || Math.abs(dz) === WAYSTONE_RADIUS;
+            setBlock(sx, baseY, sz, edge ? palette.rim : palette.floor);
+
+            if(edge && (Math.abs(dx) + Math.abs(dz)) % 2 === 0 && distSq > 11) {
+                setBlock(sx, baseY + 1, sz, palette.rim);
+            }
+        }
+    }
+}
+
+function placeWaystoneBeacon(wx, wz, baseY, palette, variant) {
+    const height = 8 + Math.floor(variant * 3);
+    for(let y = 1; y <= height; y++) {
+        setBlock(wx, baseY + y, wz, palette.pillar);
+    }
+
+    const swirl = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+    for(let y = 2; y < height; y += 2) {
+        const dir = swirl[(y + Math.floor(variant * 11)) % swirl.length];
+        setBlock(wx + dir[0], baseY + y, wz + dir[1], palette.accent);
+    }
+
+    const topY = baseY + height + 1;
+    for(let dy = -1; dy <= 1; dy++) {
+        for(let dz = -2; dz <= 2; dz++) {
+            for(let dx = -2; dx <= 2; dx++) {
+                if(dx * dx + dz * dz + dy * dy * 2 > 5) continue;
+                const block = (dx + dz + dy) % 2 === 0 ? palette.cap : palette.highlight;
+                setBlock(wx + dx, topY + dy, wz + dz, block);
+            }
+        }
+    }
+    setBlock(wx, topY + 2, wz, palette.sparkle);
+}
+
+function placeWaystoneRewards(wx, wz, baseY, palette) {
+    const rewardSpots = [[2, 0], [-2, 0], [0, 2], [0, -2]];
+    for(let i = 0; i < rewardSpots.length; i++) {
+        const spot = rewardSpots[i];
+        setBlock(wx + spot[0], baseY + 1, wz + spot[1], palette.rewards[i]);
+    }
+
+    const sprinkleSpots = [[2, 2], [-2, 2], [2, -2], [-2, -2]];
+    for(let i = 0; i < sprinkleSpots.length; i++) {
+        const spot = sprinkleSpots[i];
+        setBlock(wx + spot[0], baseY + 1, wz + spot[1], SPRINKLE);
+    }
+}
+
+function placeCandyWaystone(site, sectorX, sectorZ) {
+    const palette = getWaystonePalette(site.biome);
+    const variant = hash2D(site.x * 17 + sectorX * 101, site.z * 23 + sectorZ * 103);
+    placeWaystonePlatform(site.x, site.z, site.baseY, palette);
+    placeWaystoneBeacon(site.x, site.z, site.baseY, palette, variant);
+    placeWaystoneRewards(site.x, site.z, site.baseY, palette);
+}
+
+function generateCandyWaystones(spawnX, spawnZ) {
+    const sectorsX = Math.ceil(WORLD_W / WAYSTONE_SECTOR_SIZE);
+    const sectorsZ = Math.ceil(WORLD_D / WAYSTONE_SECTOR_SIZE);
+    for(let sectorZ = 0; sectorZ < sectorsZ; sectorZ++) {
+        for(let sectorX = 0; sectorX < sectorsX; sectorX++) {
+            const site = findWaystoneSite(sectorX, sectorZ, spawnX, spawnZ);
+            if(site) placeCandyWaystone(site, sectorX, sectorZ);
+        }
+    }
+}
+
 // ====== CHUNK MESHING ======
 function getBlockInChunkOrWorld(chunk, cx, cz, lx, ly, lz) {
     if(ly < 0 || ly >= CHUNK_H) return AIR;

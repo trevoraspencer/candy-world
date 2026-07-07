@@ -75,6 +75,99 @@ const RECIPES = BASIC_RECIPES.concat(ADVANCED_RECIPES).concat(SMELTING_RECIPES);
 
 let craftedFeedbackTimer = null;
 
+const RECIPE_CATEGORY_META = {
+    crafting: { recipes: BASIC_RECIPES, label: 'Inventory', readyText: 'Ready to craft from your inventory.' },
+    table: { recipes: ADVANCED_RECIPES, label: 'Crafting Table', readyText: 'Ready at a Crafting Table.' },
+    furnace: { recipes: SMELTING_RECIPES, label: 'Furnace', readyText: 'Ready at a Furnace.' }
+};
+
+function getRecipeCategoryMeta(category) {
+    return RECIPE_CATEGORY_META[category] || null;
+}
+
+function sanitizeRecipeGuide(ref) {
+    if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return null;
+    const meta = getRecipeCategoryMeta(ref.category);
+    if (!meta) return null;
+    if (!Number.isInteger(ref.recipeIndex) || ref.recipeIndex < 0 || ref.recipeIndex >= meta.recipes.length) return null;
+    return { category: ref.category, recipeIndex: ref.recipeIndex };
+}
+
+function getRecipeGuideEntry() {
+    const ref = sanitizeRecipeGuide(game.recipeGuide);
+    if (!ref) {
+        game.recipeGuide = null;
+        return null;
+    }
+    const meta = getRecipeCategoryMeta(ref.category);
+    return {
+        category: ref.category,
+        recipeIndex: ref.recipeIndex,
+        recipe: meta.recipes[ref.recipeIndex],
+        meta: meta
+    };
+}
+
+function isTrackingRecipe(category, recipeIndex) {
+    const ref = sanitizeRecipeGuide(game.recipeGuide);
+    return !!ref && ref.category === category && ref.recipeIndex === recipeIndex;
+}
+
+function trackRecipe(category, recipeIndex) {
+    const ref = sanitizeRecipeGuide({ category: category, recipeIndex: recipeIndex });
+    if (!ref) return;
+    game.recipeGuide = ref;
+    refreshRecipeGuideSurfaces();
+    if (typeof scheduleSaveGame === 'function') scheduleSaveGame();
+}
+
+function clearRecipeGuide() {
+    game.recipeGuide = null;
+    refreshRecipeGuideSurfaces();
+    if (typeof scheduleSaveGame === 'function') scheduleSaveGame();
+}
+
+function formatItemCount(id, count) {
+    return count + ' ' + (BLOCK_NAMES[id] || '???');
+}
+
+function getMissingIngredients(recipe) {
+    const missing = [];
+    for (const ing of recipe.ingredients) {
+        const owned = countItem(ing.id);
+        if (owned < ing.count) {
+            missing.push({
+                id: ing.id,
+                count: ing.count - owned,
+                owned: owned,
+                required: ing.count
+            });
+        }
+    }
+    return missing;
+}
+
+function getRecipeGuideStatus(entry) {
+    const recipe = entry.recipe;
+    if (canCraft(recipe)) return entry.meta.readyText;
+
+    const missing = getMissingIngredients(recipe);
+    if (missing.length === 0) {
+        return 'Free inventory space for ' + formatItemCount(recipe.result.id, recipe.result.count) + '.';
+    }
+
+    return 'Need ' + missing.map(function(ing) {
+        return formatItemCount(ing.id, ing.count);
+    }).join(', ') + '.';
+}
+
+function refreshRecipeGuideSurfaces() {
+    updateRecipeGuideUI();
+    if (game.inventoryOpen) updateCraftingUI();
+    if (game.craftingTableOpen) updateCraftingTableUI();
+    if (game.furnaceOpen) updateFurnaceUI();
+}
+
 function countItem(id) {
     let total = 0;
     // Iterate the live length: creative mode grows game.inventory beyond 36 slots.
@@ -131,6 +224,7 @@ function updateCraftingUI() {
     list.innerHTML = '';
     // Only show basic recipes in the inventory crafting panel
     _renderRecipeList(list, BASIC_RECIPES, 'crafting');
+    updateRecipeGuideUI();
 }
 
 // ====== CRAFTING TABLE UI ======
@@ -139,6 +233,7 @@ function updateCraftingTableUI() {
     if (!list) return;
     list.innerHTML = '';
     _renderRecipeList(list, ADVANCED_RECIPES, 'table');
+    updateRecipeGuideUI();
 }
 
 // ====== FURNACE UI ======
@@ -147,18 +242,96 @@ function updateFurnaceUI() {
     if (!list) return;
     list.innerHTML = '';
     _renderRecipeList(list, SMELTING_RECIPES, 'furnace');
+    updateRecipeGuideUI();
 }
 
 // ====== SHARED RECIPE LIST RENDERER ======
 let _recentlyCrafted = null; // { category, recipeIndex }
 
+function _renderRecipeGuideCard(container) {
+    const entry = getRecipeGuideEntry();
+    if (!entry) return;
+
+    const card = document.createElement('div');
+    card.className = 'recipe-guide-card';
+
+    const icon = document.createElement('div');
+    icon.className = 'recipe-guide-icon';
+    setItemIcon(icon, entry.recipe.result.id);
+    card.appendChild(icon);
+
+    const body = document.createElement('div');
+    body.className = 'recipe-guide-body';
+
+    const title = document.createElement('div');
+    title.className = 'recipe-guide-title';
+    title.textContent = 'Tracking ' + formatItemCount(entry.recipe.result.id, entry.recipe.result.count);
+    body.appendChild(title);
+
+    const station = document.createElement('div');
+    station.className = 'recipe-guide-station';
+    station.textContent = entry.meta.label;
+    body.appendChild(station);
+
+    const status = document.createElement('div');
+    status.className = 'recipe-guide-status' + (canCraft(entry.recipe) ? ' ready' : '');
+    status.textContent = getRecipeGuideStatus(entry);
+    body.appendChild(status);
+
+    card.appendChild(body);
+
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'recipe-guide-clear';
+    clear.textContent = 'Clear';
+    clear.addEventListener('click', function(event) {
+        event.stopPropagation();
+        clearRecipeGuide();
+    });
+    card.appendChild(clear);
+
+    container.appendChild(card);
+}
+
+function updateRecipeGuideUI() {
+    const hud = document.getElementById('recipe-guide');
+    if (!hud) return;
+
+    const entry = getRecipeGuideEntry();
+    hud.innerHTML = '';
+    if (!entry) {
+        hud.style.display = 'none';
+        return;
+    }
+
+    const name = document.createElement('div');
+    name.className = 'recipe-guide-hud-title';
+    name.textContent = formatItemCount(entry.recipe.result.id, entry.recipe.result.count);
+    hud.appendChild(name);
+
+    const station = document.createElement('div');
+    station.className = 'recipe-guide-hud-station';
+    station.textContent = entry.meta.label;
+    hud.appendChild(station);
+
+    const status = document.createElement('div');
+    status.className = 'recipe-guide-hud-status' + (canCraft(entry.recipe) ? ' ready' : '');
+    status.textContent = getRecipeGuideStatus(entry);
+    hud.appendChild(status);
+
+    hud.style.display = 'block';
+}
+
 function _renderRecipeList(container, recipes, category) {
+    _renderRecipeGuideCard(container);
+
     for (let ri = 0; ri < recipes.length; ri++) {
         const recipe = recipes[ri];
         const craftable = canCraft(recipe);
+        const tracked = isTrackingRecipe(category, ri);
         const recentlyCrafted = _recentlyCrafted && _recentlyCrafted.category === category && _recentlyCrafted.recipeIndex === ri;
         const row = document.createElement('div');
-        row.className = 'craft-row' + (craftable ? ' craftable' : ' dimmed') + (recentlyCrafted ? ' crafted' : '');
+        row.className = 'craft-row' + (craftable ? ' craftable' : ' dimmed') + (recentlyCrafted ? ' crafted' : '') + (tracked ? ' tracked' : '');
         row.setAttribute('aria-disabled', craftable ? 'false' : 'true');
 
         const icon = document.createElement('div');
@@ -186,6 +359,9 @@ function _renderRecipeList(container, recipes, category) {
         info.appendChild(ings);
         row.appendChild(info);
 
+        const actions = document.createElement('div');
+        actions.className = 'craft-actions';
+
         const status = document.createElement(craftable ? 'button' : 'span');
         status.className = 'craft-status ' + (recentlyCrafted ? 'crafted' : (craftable ? 'craft-action' : 'missing'));
         status.textContent = recentlyCrafted ? 'Crafted!' : (category === 'furnace' ? (craftable ? 'Smelt' : 'Missing') : (craftable ? 'Craft' : 'Missing'));
@@ -193,7 +369,21 @@ function _renderRecipeList(container, recipes, category) {
             status.type = 'button';
             status.setAttribute('aria-label', (category === 'furnace' ? 'Smelt ' : 'Craft ') + resultName);
         }
-        row.appendChild(status);
+        actions.appendChild(status);
+
+        const track = document.createElement('button');
+        track.type = 'button';
+        track.className = 'craft-track' + (tracked ? ' tracked' : '');
+        track.textContent = tracked ? 'Clear' : 'Track';
+        track.setAttribute('aria-pressed', tracked ? 'true' : 'false');
+        track.setAttribute('aria-label', (tracked ? 'Clear tracked recipe for ' : 'Track recipe for ') + resultName);
+        track.addEventListener('click', function(event) {
+            event.stopPropagation();
+            if (tracked) clearRecipeGuide();
+            else trackRecipe(category, ri);
+        });
+        actions.appendChild(track);
+        row.appendChild(actions);
 
         if (craftable) {
             const craftRecipe = () => {
@@ -219,6 +409,7 @@ function _renderRecipeList(container, recipes, category) {
                 if (category === 'table' || category === 'furnace') {
                     updateHotbar();
                 }
+                updateRecipeGuideUI();
             };
             row.addEventListener('click', craftRecipe);
         }
