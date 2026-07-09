@@ -85,6 +85,7 @@ function render(now) {
     // Block breaking
     const miningActive = game.miningKeyHeld || (game.mouseDown[0] && game.pointerLocked);
     if(miningActive && game.targetBlock && !game.inventoryOpen && !game.tradeTarget && !game.petPanelOpen && !game.questPanelOpen && !game.craftingTableOpen && !game.furnaceOpen && !game.controlsOverlayOpen) {
+        game.actionHelper.actionSeen = true;
         if(!game.breakingBlock || game.breakingBlock.x !== game.targetBlock.x || game.breakingBlock.y !== game.targetBlock.y || game.breakingBlock.z !== game.targetBlock.z) {
             game.breakingBlock = { x: game.targetBlock.x, y: game.targetBlock.y, z: game.targetBlock.z };
             game.breakProgress = 0;
@@ -218,6 +219,7 @@ function render(now) {
 
     // Update effect HUD
     updateEffectHUD();
+    updateActionHelper(miningActive);
 
     // Update debug info
     debugTimer += dt;
@@ -309,6 +311,202 @@ function drawCracks(ctx, cracks, cx, cy, lineWidth, strokeStyle) {
         }
         ctx.stroke();
     }
+}
+
+// ====== ACTION HELPER HUD ======
+function isAnyPanelOpen() {
+    return game.inventoryOpen || game.tradeTarget || game.petPanelOpen || game.questPanelOpen ||
+        game.craftingTableOpen || game.furnaceOpen || game.controlsOverlayOpen || isRecipeGuideVisible();
+}
+
+function isRecipeGuideVisible() {
+    const guide = document.getElementById('recipe-guide');
+    return !!guide && window.getComputedStyle(guide).display !== 'none';
+}
+
+function isMovementKeyDown() {
+    return game.keys['KeyW'] || game.keys['KeyA'] || game.keys['KeyS'] || game.keys['KeyD'] ||
+        game.keys['ArrowUp'] || game.keys['ArrowLeft'] || game.keys['ArrowDown'] || game.keys['ArrowRight'] ||
+        game.keys['Space'] || game.keys['ShiftLeft'] || game.keys['ShiftRight'] ||
+        game.keys['ControlLeft'] || game.keys['ControlRight'];
+}
+
+function getSelectedItemName() {
+    const item = game.inventory[game.selectedSlot];
+    return item ? (BLOCK_NAMES[item.id] || 'Item') : '';
+}
+
+function getBlockActionHint(blockId) {
+    if(blockId === CRAFTING_TABLE) {
+        return {
+            title: 'Crafting Table',
+            detail: 'Right-click or press F to craft advanced items.',
+            kind: 'interact'
+        };
+    }
+    if(blockId === FURNACE) {
+        return {
+            title: 'Furnace',
+            detail: 'Right-click or press F to smelt ores and sand.',
+            kind: 'interact'
+        };
+    }
+    return {
+        title: BLOCK_NAMES[blockId] || 'Block',
+        detail: 'Hold R or left-click to mine it.',
+        kind: 'target'
+    };
+}
+
+function getMobActionHint(item) {
+    if(typeof findTargetMob !== 'function') return null;
+    const mobTarget = findTargetMob(5);
+    if(!mobTarget || !mobTarget.mob) return null;
+    const mob = mobTarget.mob;
+    const name = MOB_NAMES[mob.type] || 'Friend';
+    if(item && isTreatItem(item.id) && typeof isAnimalMob === 'function' && isAnimalMob(mob.type) && !mob.tamed) {
+        return {
+            title: 'Tame ' + name,
+            detail: 'Right-click with ' + (BLOCK_NAMES[item.id] || 'a treat') + ' to make a pet.',
+            kind: 'interact'
+        };
+    }
+    if(mob.tamed) {
+        return {
+            title: mob.petName || name,
+            detail: 'Press P to open your pet panel.',
+            kind: 'pet'
+        };
+    }
+    return null;
+}
+
+function getVillagerActionHint() {
+    if(typeof findTargetVillager !== 'function') return null;
+    const villagerTarget = findTargetVillager();
+    if(!villagerTarget || !villagerTarget.mob) return null;
+    if(game.targetBlock && villagerTarget.dist > game.targetBlock.dist + 0.35) return null;
+    return {
+        title: MOB_NAMES[villagerTarget.mob.type] || 'Villager',
+        detail: 'Press T to trade.',
+        kind: 'interact'
+    };
+}
+
+function getHeldItemActionHint(item) {
+    if(!item) {
+        return {
+            title: 'Empty hand',
+            detail: 'Aim at blocks to mine. Press E for inventory.',
+            kind: 'starter'
+        };
+    }
+    const name = BLOCK_NAMES[item.id] || 'Item';
+    if(isTreatItem(item.id)) {
+        return {
+            title: name,
+            detail: 'Right-click to eat, or aim at an animal to tame it.',
+            kind: 'interact'
+        };
+    }
+    if(isPlaceableBlockItem(item.id)) {
+        return {
+            title: name,
+            detail: 'Aim at a block, then press F or right-click to place.',
+            kind: 'target'
+        };
+    }
+    if(isToolItem(item.id)) {
+        return {
+            title: name,
+            detail: 'Aim at a block and hold R or left-click.',
+            kind: 'target'
+        };
+    }
+    return {
+        title: name,
+        detail: 'Press E to manage inventory. H shows controls.',
+        kind: 'starter'
+    };
+}
+
+function applyActionHelperHint(hint, visible) {
+    const helper = document.getElementById('action-helper');
+    if(!helper) return;
+    if(!visible || !hint) {
+        helper.className = 'action-helper';
+        helper.setAttribute('aria-hidden', 'true');
+        return;
+    }
+
+    const titleEl = document.getElementById('action-helper-title');
+    const detailEl = document.getElementById('action-helper-detail');
+    if(titleEl && game.actionHelper.lastTitle !== hint.title) titleEl.textContent = hint.title;
+    if(detailEl && game.actionHelper.lastDetail !== hint.detail) detailEl.textContent = hint.detail;
+    game.actionHelper.lastTitle = hint.title;
+    game.actionHelper.lastDetail = hint.detail;
+    game.actionHelper.lastKind = hint.kind || '';
+
+    helper.className = 'action-helper visible' + (hint.kind ? ' ' + hint.kind : '');
+    helper.setAttribute('aria-hidden', 'false');
+}
+
+function updateActionHelper(miningActive) {
+    if(isMovementKeyDown()) game.actionHelper.movementSeen = true;
+    if(miningActive && game.targetBlock) game.actionHelper.actionSeen = true;
+
+    if(!game.worldLoaded || isAnyPanelOpen()) {
+        applyActionHelperHint(null, false);
+        return;
+    }
+
+    if(!game.pointerLocked) {
+        applyActionHelperHint({
+            title: game.actionHelper.pointerLockedOnce ? 'Click to return' : 'Click to play',
+            detail: 'WASD to move. H or ? shows controls.',
+            kind: 'starter'
+        }, true);
+        return;
+    }
+
+    const item = game.inventory[game.selectedSlot];
+    const mobHint = getMobActionHint(item);
+    if(mobHint) {
+        applyActionHelperHint(mobHint, true);
+        return;
+    }
+
+    const villagerHint = getVillagerActionHint();
+    if(villagerHint) {
+        applyActionHelperHint(villagerHint, true);
+        return;
+    }
+
+    if(game.targetBlock) {
+        const blockHint = getBlockActionHint(game.targetBlock.block);
+        const heldName = getSelectedItemName();
+        if(item && isPlaceableBlockItem(item.id) && game.targetBlock.block !== CRAFTING_TABLE && game.targetBlock.block !== FURNACE) {
+            blockHint.detail = 'F/right-click places ' + heldName + '. Hold R/left-click mines.';
+        }
+        applyActionHelperHint(blockHint, true);
+        return;
+    }
+
+    if(!game.actionHelper.movementSeen || game.gameTime < 14) {
+        applyActionHelperHint({
+            title: 'Explore Sweet, Sweet World',
+            detail: 'WASD moves, mouse looks, E opens inventory.',
+            kind: 'starter'
+        }, true);
+        return;
+    }
+
+    if(!game.actionHelper.actionSeen || (item && (isTreatItem(item.id) || isPlaceableBlockItem(item.id) || isToolItem(item.id)))) {
+        applyActionHelperHint(getHeldItemActionHint(item), true);
+        return;
+    }
+
+    applyActionHelperHint(null, false);
 }
 
 // ====== CONTROLS OVERLAY ======

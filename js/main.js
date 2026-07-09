@@ -84,13 +84,20 @@ async function loadWorld() {
     loadbar.style.width = '63%';
     await new Promise(r => setTimeout(r, 10));
 
-    loadText.textContent = 'Restoring saved world...';
+    loadText.textContent = 'Raising candy waystones...';
     loadbar.style.width = '64%';
+    await new Promise(r => setTimeout(r, 10));
+    generateCandyWaystones(spawn.bestX, spawn.bestZ);
+    loadbar.style.width = '65%';
+    await new Promise(r => setTimeout(r, 10));
+
+    loadText.textContent = 'Restoring saved world...';
+    loadbar.style.width = '66%';
     await new Promise(r => setTimeout(r, 10));
     applySavedBlocks();
 
     loadText.textContent = 'Painting item icons...';
-    loadbar.style.width = '65%';
+    loadbar.style.width = '67%';
     await new Promise(r => setTimeout(r, 10));
     generateItemIcons();
 
@@ -103,7 +110,7 @@ async function loadWorld() {
             meshChunk(cx, cz);
             meshed++;
             if(performance.now() - lastYield > 16) {
-                const pct = 65 + (meshed / totalChunks) * 30;
+                const pct = 67 + (meshed / totalChunks) * 28;
                 loadbar.style.width = pct + '%';
                 loadText.textContent = `Building meshes... ${meshed}/${totalChunks}`;
                 await new Promise(r => setTimeout(r, 0));

@@ -36,10 +36,12 @@ function handlePlaceAction() {
     if (game.targetBlock) {
         const tb = game.targetBlock;
         if (tb.block === CRAFTING_TABLE) {
+            game.actionHelper.actionSeen = true;
             openCraftingTableUI(tb.x, tb.y, tb.z);
             return true;
         }
         if (tb.block === FURNACE) {
+            game.actionHelper.actionSeen = true;
             openFurnaceUI(tb.x, tb.y, tb.z);
             return true;
         }
@@ -52,6 +54,7 @@ function handlePlaceAction() {
             // Looking at a mob while holding treat
             if(isAnimalMob(mobTarget.mob.type) && !mobTarget.mob.tamed) {
                 // Valid untamed animal → tame it, consume treat
+                game.actionHelper.actionSeen = true;
                 tameAnimal(mobTarget.mob);
                 if(!game.creativeMode) removeFromSlot(game.selectedSlot);
                 updateHotbar();
@@ -61,6 +64,7 @@ function handlePlaceAction() {
             return false;
         }
         // No mob target → eat the treat (existing behavior)
+        game.actionHelper.actionSeen = true;
         eatTreat(item.id);
         if(!game.creativeMode) removeFromSlot(game.selectedSlot);
         updateHotbar();
@@ -78,6 +82,7 @@ function handlePlaceAction() {
                          pAABB.y0 < py2 + 1 && pAABB.y1 > py2 &&
                          pAABB.z0 < pz2 + 1 && pAABB.z1 > pz2;
         if(!overlaps) {
+            game.actionHelper.actionSeen = true;
             setBlock(px2, py2, pz2, item.id);
             if(!game.creativeMode) removeFromSlot(game.selectedSlot);
             updateHotbar();
@@ -96,6 +101,7 @@ function handleInteractAction() {
     if(game.targetBlock && villagerTarget.dist > game.targetBlock.dist + 0.35) return false;
     const villager = villagerTarget.mob;
     if(villager.trades && villager.trades.length > 0) {
+        game.actionHelper.actionSeen = true;
         openTradePanel(villager);
         return true;
     }
@@ -254,6 +260,7 @@ function handlePointerLockChange() {
     const lockElement = document.pointerLockElement || document.webkitPointerLockElement;
     game.pointerLocked = lockElement === game.canvas;
     game.canvas.style.cursor = game.pointerLocked ? 'none' : 'default';
+    if(game.pointerLocked) game.actionHelper.pointerLockedOnce = true;
     if(game.pointerLocked && pendingPointerLockAction) {
         const pendingAction = pendingPointerLockAction;
         pendingPointerLockAction = null;

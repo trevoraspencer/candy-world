@@ -156,7 +156,9 @@ function updatePlayer(dt) {
     const len = Math.sqrt(mx*mx + mz*mz);
     const descendKey = game.keys['ShiftLeft'] || game.keys['ShiftRight'] || game.keys['ControlLeft'] || game.keys['ControlRight'];
     let speed = 4.5;
-    if((game.keys['ShiftLeft'] || game.keys['ShiftRight']) && !game.flyMode) speed = 6.75;
+    const wantsSprint = (game.keys['ShiftLeft'] || game.keys['ShiftRight']) && !game.flyMode;
+    if(wantsSprint && (typeof canSurvivalSprint !== 'function' || canSurvivalSprint())) speed = 6.75;
+    if(typeof getSurvivalMovementSpeedMultiplier === 'function') speed *= getSurvivalMovementSpeedMultiplier();
     if(hasEffect(EFFECT_SPEED)) speed *= 1.5;
     if(len > 0) {
         mx = (mx / len) * speed;
@@ -178,6 +180,7 @@ function updatePlayer(dt) {
         if(game.keys['Space'] && game.player.onGround) {
             game.player.vy = hasEffect(EFFECT_JUMP) ? 12 : 8;
             game.player.onGround = false;
+            if(typeof addSurvivalExertion === 'function') addSurvivalExertion(SURVIVAL_JUMP_HUNGER_COST);
         }
     }
 
@@ -270,6 +273,7 @@ function addItem(id, count) {
                 count -= add;
                 if(count <= 0) {
                     if(typeof scheduleSaveGame === 'function') scheduleSaveGame();
+                    if(typeof updateRecipeGuideUI === 'function') updateRecipeGuideUI();
                     return true;
                 }
             }
@@ -283,6 +287,7 @@ function addItem(id, count) {
             count -= add;
             if(count <= 0) {
                 if(typeof scheduleSaveGame === 'function') scheduleSaveGame();
+                if(typeof updateRecipeGuideUI === 'function') updateRecipeGuideUI();
                 return true;
             }
         }
@@ -344,6 +349,7 @@ function removeFromSlot(slot) {
     game.inventory[slot].count--;
     if(game.inventory[slot].count <= 0) game.inventory[slot] = null;
     if(typeof scheduleSaveGame === 'function') scheduleSaveGame();
+    if(typeof updateRecipeGuideUI === 'function') updateRecipeGuideUI();
     // Try to deliver any pending quest rewards that now fit
     if(typeof tryGrantPendingRewards === 'function') tryGrantPendingRewards();
 }
@@ -420,6 +426,7 @@ function updateHotbar() {
         });
         hotbar.appendChild(slot);
     }
+    if(typeof updateRecipeGuideUI === 'function') updateRecipeGuideUI();
 }
 
 function updateHearts() {
@@ -494,6 +501,7 @@ function updateInventoryUI() {
                 }
             }
             updateInventoryUI();
+            if(game.inventoryOpen && typeof updateCraftingUI === 'function') updateCraftingUI();
             updateHotbar();
             if(typeof scheduleSaveGame === 'function') scheduleSaveGame();
         });

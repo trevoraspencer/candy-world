@@ -11,6 +11,7 @@ No build step, no dependencies, fully offline — just open the file and play.
 
 - 256×64×256 voxel world (16×16 chunks) generated from value-noise terrain
 - Five biomes: forest, mountains, plains, beaches, deep dark
+- Biome-themed candy waystone landmarks with small mineable exploration rewards
 - WebGL2 chunk meshing with ambient occlusion and frustum culling
 - Mining, placing, crafting, and a 36-slot inventory with hotbar
 - Mobs (pigs, cows, sheep, chickens, goats, unicorns, the warden)
@@ -23,8 +24,9 @@ No build step, no dependencies, fully offline — just open the file and play.
 - Quest Book with 10 kid-friendly quests, progress tracking, rewards,
   a HUD icon, and `Q` shortcut
 - Day/night cycle, particles, status effects, and hunger/health meters
-  (cosmetic for now — eating treats refills them, but nothing drains
-  hunger or deals damage yet)
+  with a gentle Survival loop: exploring, sprinting, jumping, and mining
+  drain hunger; being well-fed heals; an empty hunger meter causes a
+  non-lethal sugar crash until you snack again
 - Save/load via `localStorage` (saved automatically as you play) with versioned format and migration support
 - Built-in performance instrumentation (frame timing via `performance.mark`/`measure`; console logging is off by default — set `ENABLE_PERF_LOGS = true` in `js/render.js` to print a summary every 60 frames)
 
