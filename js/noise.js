@@ -2,6 +2,7 @@
 
 // ====== NOISE ======
 function hash2D(x, y) {
+    if(typeof game!=='undefined'&&game.generatorVersion>=2&&game.worldSeed){const offset=CandyCore.mixSeed(game.worldSeed,'terrain');x+=offset&65535;y+=(offset>>>16)&65535;}
     let n = ((x * 374761393 + y * 668265263) | 0);
     n = (((n ^ (n >> 13)) * 1274126177) | 0);
     return ((n ^ (n >> 16)) & 0x7fffffff) / 0x7fffffff;
@@ -23,6 +24,7 @@ function fbm2D(x, y, octaves) {
     return val / total;
 }
 function hash3D(x, y, z) {
+    if(typeof game!=='undefined'&&game.generatorVersion>=2&&game.worldSeed){const offset=CandyCore.mixSeed(game.worldSeed,'terrain-3d');x+=offset&1023;y+=(offset>>>10)&1023;z+=(offset>>>20)&1023;}
     let n = ((x * 374761393 + y * 668265263 + z * 1013904223) | 0);
     n = (((n ^ (n >> 13)) * 1274126177) | 0);
     return ((n ^ (n >> 16)) & 0x7fffffff) / 0x7fffffff;

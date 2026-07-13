@@ -12,6 +12,7 @@ const ITEM_DIAMOND_PICKAXE = 126, ITEM_DIAMOND_AXE = 127, ITEM_DIAMOND_SHOVEL = 
 const ITEM_NETHERITE_PICKAXE = 130, ITEM_NETHERITE_AXE = 131, ITEM_NETHERITE_SHOVEL = 132, ITEM_NETHERITE_SWORD = 133;
 const ITEM_CUPCAKE = 140, ITEM_COOKIE = 141, ITEM_CANDY = 142, ITEM_LOLLIPOP = 143;
 const ITEM_IRON_INGOT = 150, ITEM_GOLD_INGOT = 151, ITEM_DIAMOND_GEM = 152, ITEM_NETHERITE_INGOT = 153, ITEM_LAPIS_GEM = 154;
+const ITEM_WAFER_HOE=155, ITEM_COOKIE_SEEDS=156, ITEM_GUMMY_SEEDS=157, ITEM_GUMMY_BERRIES=158;
 
 // Item names and colors
 BLOCK_NAMES[ITEM_STICK] = 'Stick'; BLOCK_COLORS[ITEM_STICK] = '#DEB887';
@@ -50,10 +51,14 @@ BLOCK_NAMES[ITEM_GOLD_INGOT] = 'Gold Ingot'; BLOCK_COLORS[ITEM_GOLD_INGOT] = '#D
 BLOCK_NAMES[ITEM_DIAMOND_GEM] = 'Diamond'; BLOCK_COLORS[ITEM_DIAMOND_GEM] = '#B9F2FF';
 BLOCK_NAMES[ITEM_NETHERITE_INGOT] = 'Netherite Ingot'; BLOCK_COLORS[ITEM_NETHERITE_INGOT] = '#4A4A5A';
 BLOCK_NAMES[ITEM_LAPIS_GEM] = 'Lapis'; BLOCK_COLORS[ITEM_LAPIS_GEM] = '#87CEEB';
+BLOCK_NAMES[ITEM_WAFER_HOE]='Wafer Hoe';BLOCK_COLORS[ITEM_WAFER_HOE]='#B87845';
+BLOCK_NAMES[ITEM_COOKIE_SEEDS]='Cookie-Wheat Seeds';BLOCK_COLORS[ITEM_COOKIE_SEEDS]='#E3B45F';
+BLOCK_NAMES[ITEM_GUMMY_SEEDS]='Gummy Berry Seeds';BLOCK_COLORS[ITEM_GUMMY_SEEDS]='#79B844';
+BLOCK_NAMES[ITEM_GUMMY_BERRIES]='Gummy Berries';BLOCK_COLORS[ITEM_GUMMY_BERRIES]='#E13B70';
 
 // Tool / treat classification
-function isToolItem(id) { return id >= 110 && id <= 133; }
-function isTreatItem(id) { return id >= 140 && id <= 143; }
+function isToolItem(id) { return (id >= 110 && id <= 133) || id===ITEM_WAFER_HOE; }
+function isTreatItem(id) { return (id >= 140 && id <= 143) || id===ITEM_GUMMY_BERRIES; }
 function getItemMaxStack(id) { return isToolItem(id) ? 1 : 64; }
 
 function setItemIcon(el, id) {
@@ -79,7 +84,7 @@ function generateItemIcons() {
     }
 
     // (a) Block icons — extract top tile from atlas
-    for (let id = 1; id <= 32; id++) {
+    for (let id = 1; id <= LAST_BLOCK; id++) {
         if (!BLOCK_TILES[id]) continue;
         const tileIdx = BLOCK_TILES[id][0]; // top face
         const sx = (tileIdx % 16) * 16;

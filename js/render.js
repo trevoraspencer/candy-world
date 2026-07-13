@@ -7,6 +7,8 @@ let perfFrameCount = 0;
 let fps = 0;
 let fpsTimer = 0;
 let debugTimer = 0;
+let simulationAccumulator=0;
+const frameTimeSamples=[];
 const ENABLE_PERF_LOGS = false;
 const visibleOpaqueChunks = [];
 const visibleWaterChunks = [];
@@ -18,12 +20,15 @@ const vpMatrix = new Float32Array(16);
 
 function render(now) {
     requestAnimationFrame(render);
-    const dt = Math.min((now - game.lastTime) / 1000, 0.05);
+    const frameDt = Math.min((now - game.lastTime) / 1000, 0.05);
+    const fixed=game.paused?{steps:0,accumulator:simulationAccumulator,alpha:0}:CandyCore.advanceFixedStep(simulationAccumulator,frameDt,{step:1/60,maxSteps:12});simulationAccumulator=fixed.accumulator;const dt=fixed.steps/60;
     game.lastTime = now;
     game.gameTime += dt;
     frameCount++;
-    fpsTimer += dt;
+    frameTimeSamples.push(frameDt*1000);if(frameTimeSamples.length>600)frameTimeSamples.shift();if(perfFrameCount%120===0&&frameTimeSamples.length){const sorted=frameTimeSamples.slice().sort((a,b)=>a-b),pick=p=>sorted[Math.min(sorted.length-1,Math.floor(sorted.length*p))];document.documentElement.dataset.frameStats=[pick(.5).toFixed(2),pick(.95).toFixed(2),pick(.99).toFixed(2),fps].join(',');}
+    fpsTimer += frameDt;
     if(fpsTimer >= 1) { fps = frameCount; frameCount = 0; fpsTimer = 0; }
+    updateTutorial(dt);
 
     perfFrameCount++;
     if(perfFrameCount % 60 === 0) {
@@ -42,8 +47,9 @@ function render(now) {
         performance.clearMarks();
     }
 
-    // Update day/night cycle
-    updateDayNight(dt);
+    for(let tick=0;tick<fixed.steps;tick++){
+        const step=1/60;updateDayNight(step);updatePlayer(step);updateMobs(step);updateEffects(step);updateItemDrops(step);updateOvens(step);updateFarming(step);updateMechanisms(step);
+    }
 
     // Check station UI disruption: close if player moves too far or block is destroyed
     if(game.craftingTableOpen && game.craftingTablePos) {
@@ -64,16 +70,15 @@ function render(now) {
             closeFurnaceUI();
         }
     }
+    if(game.chestOpen&&game.chestPos){const cp=game.chestPos,dx=game.player.x-(cp.x+.5),dy=game.player.y-(cp.y+.5),dz=game.player.z-(cp.z+.5);if(dx*dx+dy*dy+dz*dz>36||getBlock(cp.x,cp.y,cp.z)!==CUPCAKE_CHEST)closeChest();}
 
-    // Update game.player
-    updatePlayer(dt);
+    const viewMotion = updateFirstPersonPresentation(dt);
 
     // Update game.mobs and effects
     performance.mark('updateMobs_start');
-    updateMobs(dt);
     performance.mark('updateMobs_end');
     performance.measure('updateMobs', 'updateMobs_start', 'updateMobs_end');
-    updateEffects(dt);
+    CandyAudio.update(dt);
 
     // Block targeting
     const camX = game.player.x, camY = game.player.y + 1.62, camZ = game.player.z;
@@ -84,40 +89,56 @@ function render(now) {
 
     // Block breaking
     const miningActive = game.miningKeyHeld || (game.mouseDown[0] && game.pointerLocked);
+    if(miningActive && game.presentation.actionTime <= 0.04) playViewAction('mine', 0.28);
     if(miningActive && game.targetBlock && !game.inventoryOpen && !game.tradeTarget && !game.petPanelOpen && !game.questPanelOpen && !game.craftingTableOpen && !game.furnaceOpen && !game.controlsOverlayOpen) {
         game.actionHelper.actionSeen = true;
         if(!game.breakingBlock || game.breakingBlock.x !== game.targetBlock.x || game.breakingBlock.y !== game.targetBlock.y || game.breakingBlock.z !== game.targetBlock.z) {
             game.breakingBlock = { x: game.targetBlock.x, y: game.targetBlock.y, z: game.targetBlock.z };
             game.breakProgress = 0;
+            game.breakStage = -1;
         }
         const hardness = BLOCK_HARDNESS[game.targetBlock.block] || 1;
         if(hardness < Infinity) {
             const heldItem = game.inventory[game.selectedSlot];
             const toolMult = heldItem ? getToolMultiplier(heldItem.id, game.targetBlock.block) : 0.5;
             game.breakProgress += dt / (hardness / toolMult);
+            const nextStage = Math.min(7, Math.floor(game.breakProgress * 8));
+            if(nextStage !== game.breakStage) {
+                game.breakStage = nextStage;
+                spawnBlockFeedback(game.targetBlock, game.targetBlock.block, 3);
+                CandyEvents.emit('blockHit', { blockId:game.targetBlock.block, position:game.targetBlock });
+            }
             if(game.breakProgress >= 1.0) {
                 // Creative mode: break the block without collecting the drop.
                 // The creative inventory is always full (every slot a max stack,
                 // and placement never decrements), so addItem() would always
                 // fail and no block could ever be broken.
-                if(game.creativeMode || addItem(game.targetBlock.block, 1)) {
-                    setBlock(game.targetBlock.x, game.targetBlock.y, game.targetBlock.z, AIR);
-                    updateHotbar();
-                }
+                const brokenBlockId = game.targetBlock.block;
+                const heldTool=game.inventory[game.selectedSlot]?.id;
+                if(brokenBlockId===FURNACE)breakBlockEntity(game.targetBlock.x,game.targetBlock.y,game.targetBlock.z);
+                breakUtilityBlock(game.targetBlock.x,game.targetBlock.y,game.targetBlock.z,brokenBlockId);
+                if(isCropBlock(brokenBlockId))harvestCrop(game.targetBlock.x,game.targetBlock.y,game.targetBlock.z,brokenBlockId,true);
+                setBlock(game.targetBlock.x, game.targetBlock.y, game.targetBlock.z, AIR);
+                if(!game.creativeMode) for(const drop of getBlockDrops(brokenBlockId,heldTool,game.targetBlock.x*31+game.targetBlock.y*17+game.targetBlock.z)) spawnItemDrop(drop.id,drop.count,game.targetBlock.x+.5,game.targetBlock.y+.7,game.targetBlock.z+.5,{x:game.targetBlock.nx*.7,y:1.5,z:game.targetBlock.nz*.7});
+                if(!game.creativeMode)damageHeldTool(1);
+                CandyEvents.emit('blockBroken', { blockId:brokenBlockId, position:game.targetBlock });
+                updateHotbar();
                 game.breakProgress = 0;
                 game.breakingBlock = null;
+                game.breakStage = -1;
             }
         }
     } else {
         if(!miningActive) { game.breakProgress = 0; game.breakingBlock = null; }
     }
     updateBreakOverlay(miningActive && game.targetBlock && !game.inventoryOpen && !game.tradeTarget && !game.petPanelOpen && !game.questPanelOpen && !game.craftingTableOpen && !game.furnaceOpen && !game.controlsOverlayOpen && game.breakProgress > 0);
+    updateChunkStreaming();
 
     // Remesh dirty game.chunks (max 4 per frame for perf)
     performance.mark('remesh_start');
     let remeshed = 0;
-    for(const key of game.dirtyChunks) {
-        if(remeshed >= 4) break;
+    if(perfFrameCount%4===0)for(const key of game.dirtyChunks) {
+        if(remeshed >= 1) break;
         const cx = (key / WORLD_CZ) | 0;
         const cz = key - cx * WORLD_CZ;
         meshChunk(cx, cz);
@@ -130,8 +151,20 @@ function render(now) {
     // === RENDERING ===
     game.gl.clear(game.gl.COLOR_BUFFER_BIT | game.gl.DEPTH_BUFFER_BIT);
 
-    renderEye[0] = camX; renderEye[1] = camY; renderEye[2] = camZ;
-    renderCenter[0] = camX + lookX; renderCenter[1] = camY + lookY; renderCenter[2] = camZ + lookZ;
+    game.gl.disable(game.gl.DEPTH_TEST);
+    game.gl.disable(game.gl.CULL_FACE);
+    game.gl.useProgram(skyProgram);
+    game.gl.uniform3f(skyUni.uTop, game.skyR * 0.58, game.skyG * 0.62, game.skyB * 0.82);
+    game.gl.uniform3f(skyUni.uHorizon, game.fogR, game.fogG, game.fogB);
+    game.gl.uniform1f(skyUni.uDayT, game.dayTime / DAY_CYCLE_LENGTH);
+    game.gl.uniform1f(skyUni.uDaylight, game.daylight);
+    game.gl.bindVertexArray(skyVAO);
+    game.gl.drawArrays(game.gl.TRIANGLES, 0, 3);
+    game.gl.enable(game.gl.DEPTH_TEST);
+    game.gl.enable(game.gl.CULL_FACE);
+
+    renderEye[0] = camX + viewMotion.x; renderEye[1] = camY - viewMotion.y; renderEye[2] = camZ;
+    renderCenter[0] = renderEye[0] + lookX; renderCenter[1] = renderEye[1] + lookY; renderCenter[2] = renderEye[2] + lookZ;
     mat4_lookAt(renderEye, renderCenter, renderUp, viewMatrix);
     mat4_multiply(game.projMatrix, viewMatrix, vpMatrix);
     const frustumPlanes = extractFrustumPlanes(vpMatrix);
@@ -146,13 +179,19 @@ function render(now) {
         if(mesh.vao && mesh.vertCount > 0) visibleOpaqueChunks.push(mesh);
         if(mesh.waterVao && mesh.waterVertCount > 0) visibleWaterChunks.push(mesh);
     }
+    visibleWaterChunks.sort((a, b) => {
+        const adx = a.centerX - camX, adz = a.centerZ - camZ;
+        const bdx = b.centerX - camX, bdz = b.centerZ - camZ;
+        return (bdx * bdx + bdz * bdz) - (adx * adx + adz * adz);
+    });
 
     // Render opaque terrain
     game.gl.useProgram(game.terrainProgram);
     game.gl.uniformMatrix4fv(tUni.uVP, false, vpMatrix);
     game.gl.uniform3f(tUni.uCamPos, camX, camY, camZ);
     game.gl.uniform1f(tUni.uDaylight, game.daylight);
-    game.gl.uniform3f(tUni.uFogColor, game.skyR, game.skyG, game.skyB);
+    game.gl.uniform3f(tUni.uSunDir, game.sunDirection[0], game.sunDirection[1], game.sunDirection[2]);
+    game.gl.uniform3f(tUni.uFogColor, game.fogR, game.fogG, game.fogB);
     game.gl.activeTexture(game.gl.TEXTURE0);
     game.gl.bindTexture(game.gl.TEXTURE_2D, game.atlasTexture);
     game.gl.uniform1i(tUni.uAtlas, 0);
@@ -171,7 +210,9 @@ function render(now) {
     game.gl.uniformMatrix4fv(wUni.uVP, false, vpMatrix);
     game.gl.uniform3f(wUni.uCamPos, camX, camY, camZ);
     game.gl.uniform1f(wUni.uDaylight, game.daylight);
-    game.gl.uniform3f(wUni.uFogColor, game.skyR, game.skyG, game.skyB);
+    game.gl.uniform1f(wUni.uTime, game.gameTime);
+    const cameraInWater = getBlock(Math.floor(camX), Math.floor(camY), Math.floor(camZ)) === WATER;
+    game.gl.uniform3f(wUni.uFogColor, cameraInWater ? 0.72 : game.fogR, cameraInWater ? 0.25 : game.fogG, cameraInWater ? 0.52 : game.fogB);
     game.gl.activeTexture(game.gl.TEXTURE0);
     game.gl.bindTexture(game.gl.TEXTURE_2D, game.atlasTexture);
     game.gl.uniform1i(wUni.uAtlas, 0);
@@ -187,16 +228,22 @@ function render(now) {
     game.gl.activeTexture(game.gl.TEXTURE0);
     game.gl.bindTexture(game.gl.TEXTURE_2D, cloudTexture);
     game.gl.uniform1i(cUni.uTex, 0);
-    game.gl.uniform2f(cUni.uOffset, game.gameTime * 0.003, 0);
     game.gl.bindVertexArray(cloudVAO);
-    game.gl.drawArrays(game.gl.TRIANGLES, 0, 6);
+    const cloudLayers = [[0,0.003,0.55],[6,0.0018,0.36],[-5,0.0045,0.24]];
+    for(const layer of cloudLayers) {
+        game.gl.uniform2f(cUni.uOffset, game.gameTime * layer[1], layer[0] * 0.017);
+        game.gl.uniform1f(cUni.uHeight, layer[0]);
+        game.gl.uniform1f(cUni.uAlpha, layer[2] * (1 - game.weather.intensity * 0.2));
+        game.gl.drawArrays(game.gl.TRIANGLES, 0, 6);
+    }
 
     game.gl.depthMask(true);
     game.gl.disable(game.gl.BLEND);
 
     // Render block highlight
     if(game.targetBlock) {
-        updateBlockHighlight(game.targetBlock.x, game.targetBlock.y, game.targetBlock.z);
+        updateBlockHighlight(game.targetBlock.x, game.targetBlock.y, game.targetBlock.z,
+            game.targetBlock.nx, game.targetBlock.ny, game.targetBlock.nz, game.breakProgress);
         game.gl.useProgram(game.lineProgram);
         game.gl.uniformMatrix4fv(lUni.uVP, false, vpMatrix);
         const targetIsBreaking = game.breakingBlock &&
@@ -207,7 +254,7 @@ function render(now) {
         const pulse = targetIsBreaking ? 0.5 + 0.5 * Math.sin(game.gameTime * 28) : 0;
         game.gl.uniform4f(lUni.uColor, 1.0, 0.2 + p * 0.55, 0.45 + p * 0.45, 0.75 + pulse * 0.25);
         game.gl.bindVertexArray(lineVAO);
-        game.gl.drawArrays(game.gl.LINES, 0, 24);
+        game.gl.drawArrays(game.gl.LINES, 0, blockHighlightVertexCount);
     }
 
     performance.mark('renderMobs_start');
@@ -215,6 +262,7 @@ function render(now) {
     performance.mark('renderMobs_end');
     performance.measure('renderMobs', 'renderMobs_start', 'renderMobs_end');
     renderParticles(vpMatrix);
+    renderItemDrops(vpMatrix);
     updateNameTags(vpMatrix);
 
     // Update effect HUD
@@ -236,6 +284,9 @@ function render(now) {
 function updateBreakOverlay(visible) {
     const overlay = document.getElementById('break-overlay');
     if(!overlay) return;
+
+    overlay.style.display = 'none';
+    return;
 
     if(!visible) {
         overlay.style.display = 'none';

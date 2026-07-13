@@ -1,4 +1,5 @@
 'use strict';
+function keyMatches(action,code){return game.keyBindings[action]===code;}
 
 // ====== INPUT HANDLING ======
 let pendingPointerLockAction = null;
@@ -8,6 +9,7 @@ function isSecondaryActionEvent(e) {
 }
 
 function requestGamePointerLock() {
+    CandyAudio.unlock();
     const request = game.canvas.requestPointerLock || game.canvas.webkitRequestPointerLock;
     if(!request) return;
     // Browsers may throw synchronously (NotSupported/Security) or reject
@@ -35,6 +37,9 @@ function handlePlaceAction() {
     // placed Crafting Table or Furnace, open its UI instead of placing.
     if (game.targetBlock) {
         const tb = game.targetBlock;
+        if(interactMechanism(tb)){game.actionHelper.actionSeen=true;return true;}
+        if(tryFarmingAction(tb,item)){game.actionHelper.actionSeen=true;return true;}
+        if(interactUtilityBlock(tb)){game.actionHelper.actionSeen=true;return true;}
         if (tb.block === CRAFTING_TABLE) {
             game.actionHelper.actionSeen = true;
             openCraftingTableUI(tb.x, tb.y, tb.z);
@@ -56,16 +61,21 @@ function handlePlaceAction() {
                 // Valid untamed animal → tame it, consume treat
                 game.actionHelper.actionSeen = true;
                 tameAnimal(mobTarget.mob);
+                CandyEvents.emit('petTamed', { position: mobTarget.mob });
+                playViewAction('interact', 0.35);
                 if(!game.creativeMode) removeFromSlot(game.selectedSlot);
                 updateHotbar();
                 return true;
             }
+            if(isAnimalMob(mobTarget.mob.type)&&startAnimalBreeding(mobTarget.mob)){if(!game.creativeMode)removeFromSlot(game.selectedSlot);updateHotbar();return true;}
             // Warden, villager, or already-tamed → no action, no consume
             return false;
         }
         // No mob target → eat the treat (existing behavior)
         game.actionHelper.actionSeen = true;
         eatTreat(item.id);
+        CandyEvents.emit('itemEaten', { itemId: item.id });
+        playViewAction('eat', 0.55);
         if(!game.creativeMode) removeFromSlot(game.selectedSlot);
         updateHotbar();
         return true;
@@ -84,9 +94,12 @@ function handlePlaceAction() {
         if(!overlaps) {
             game.actionHelper.actionSeen = true;
             setBlock(px2, py2, pz2, item.id);
+            initializePlacedBlockState(px2,py2,pz2,item.id);
+            playViewAction('place', 0.3);
+            spawnPlacementFeedback(px2, py2, pz2, item.id);
+            CandyEvents.emit('blockPlaced', { blockId:item.id, position:{x:px2+.5,y:py2+.5,z:pz2+.5} });
             if(!game.creativeMode) removeFromSlot(game.selectedSlot);
             updateHotbar();
-            if(typeof advanceQuest === 'function') advanceQuest('place-block');
             return true;
         }
         return false;
@@ -114,9 +127,31 @@ function handleSecondaryAction() {
 
 document.addEventListener('keydown', (e) => {
     game.keys[e.code] = true;
-    const gameInputBlocked = game.inventoryOpen || game.tradeTarget || game.petPanelOpen || game.questPanelOpen || game.craftingTableOpen || game.furnaceOpen || game.controlsOverlayOpen;
+    const gameInputBlocked = game.paused || game.inventoryOpen || game.tradeTarget || game.petPanelOpen || game.questPanelOpen || game.craftingTableOpen || game.furnaceOpen || game.chestOpen || game.controlsOverlayOpen;
 
-    if(e.code === 'Space' && !gameInputBlocked) {
+    if(e.code === 'F3' && !e.repeat) {
+        e.preventDefault();
+        game.debugVisible = !game.debugVisible;
+        document.getElementById('debug-info')?.classList.toggle('visible', game.debugVisible);
+    }
+
+    if(e.code === 'Escape' && !e.repeat) {
+        e.preventDefault();clearInputState();
+        const settings=document.getElementById('settings-overlay'),pause=document.getElementById('pause-overlay');
+        if(settings.getAttribute('aria-hidden')==='false'){closeSettings();return;}
+        if(game.paused&&pause.getAttribute('aria-hidden')==='false'){resumeGame();return;}
+        if(game.controlsOverlayOpen){toggleControlsOverlay();return;}
+        if(game.chestOpen){closeChest();return;}
+        if(game.furnaceOpen){closeFurnaceUI();return;}
+        if(game.craftingTableOpen){closeCraftingTableUI();return;}
+        if(game.inventoryOpen){toggleInventory();return;}
+        if(game.tradeTarget){closeTradePanel();return;}
+        if(game.petPanelOpen){togglePetPanel();return;}
+        if(game.questPanelOpen){toggleQuestPanel();return;}
+        if(game.worldLoaded)openPauseMenu();
+        return;
+    }
+    if(e.code === 'Space' && !gameInputBlocked && game.worldMode === 'creative') {
         e.preventDefault();
         if(!e.repeat) {
             const now = performance.now();
@@ -130,11 +165,11 @@ document.addEventListener('keydown', (e) => {
         }
     }
 
-    if(e.code === 'KeyR' && !gameInputBlocked) {
+    if(keyMatches('mine',e.code) && !gameInputBlocked) {
         e.preventDefault();
         game.miningKeyHeld = true;
     }
-    if(e.code === 'KeyF' && !gameInputBlocked && !e.repeat) {
+    if(keyMatches('place',e.code) && !gameInputBlocked && !e.repeat) {
         e.preventDefault();
         handlePlaceAction();
     }
@@ -142,29 +177,27 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         handleInteractAction();
     }
-    if(e.code === 'KeyE') {
+    if(keyMatches('inventory',e.code)) {
         e.preventDefault();
         game.miningKeyHeld = false;
+        if(game.chestOpen){closeChest();return;}
         if(game.controlsOverlayOpen) return; // don't open inventory under the controls overlay
         if(game.craftingTableOpen) { closeCraftingTableUI(); return; }
         if(game.furnaceOpen) { closeFurnaceUI(); return; }
         if(game.questPanelOpen) { toggleQuestPanel(); return; }
         if(game.petPanelOpen) { togglePetPanel(); return; }
         toggleInventory();
+        if(game.inventoryOpen) advanceTutorialEvent('inventoryOpened');
     }
-    if(e.code === 'KeyP' && !gameInputBlocked && !e.repeat) {
+    if(keyMatches('pets',e.code) && !gameInputBlocked && !e.repeat) {
         e.preventDefault();
         togglePetPanel();
     }
-    if(e.code === 'KeyQ' && !e.repeat) {
+    if(keyMatches('quests',e.code) && !e.repeat) {
         e.preventDefault();
         if(game.inventoryOpen || game.tradeTarget || game.craftingTableOpen || game.furnaceOpen || game.controlsOverlayOpen) return;
         if(game.petPanelOpen) { togglePetPanel(); return; }
         toggleQuestPanel();
-    }
-    if(e.code === 'KeyC' && !gameInputBlocked && !e.repeat) {
-        e.preventDefault();
-        toggleCreativeMode();
     }
     if(e.code === 'KeyH' && !e.repeat) {
         e.preventDefault();
@@ -185,7 +218,7 @@ document.addEventListener('keydown', (e) => {
 });
 document.addEventListener('keyup', (e) => {
     game.keys[e.code] = false;
-    if(e.code === 'KeyR') game.miningKeyHeld = false;
+    if(keyMatches('mine',e.code)) game.miningKeyHeld = false;
 });
 
 game.canvas.addEventListener('mousedown', (e) => {
@@ -203,7 +236,7 @@ game.canvas.addEventListener('mousedown', (e) => {
 });
 
 document.addEventListener('mousedown', (e) => {
-    if(!game.pointerLocked || game.inventoryOpen || game.tradeTarget || game.petPanelOpen || game.questPanelOpen || game.craftingTableOpen || game.furnaceOpen || game.controlsOverlayOpen) return;
+    if(!game.pointerLocked || game.inventoryOpen || game.tradeTarget || game.petPanelOpen || game.questPanelOpen || game.craftingTableOpen || game.furnaceOpen || game.chestOpen || game.controlsOverlayOpen) return;
 
     if(isSecondaryActionEvent(e)) {
         e.preventDefault();
@@ -212,7 +245,10 @@ document.addEventListener('mousedown', (e) => {
         return;
     }
 
-    if(e.button === 0) game.mouseDown[0] = true;
+    if(e.button === 0) {
+        if(!tryAttackMob()) game.mouseDown[0] = true;
+        else game.mouseDown[0] = false;
+    }
 });
 
 document.addEventListener('mouseup', (e) => {
@@ -225,6 +261,9 @@ document.addEventListener('mouseup', (e) => {
         if(pendingPointerLockAction === 'primary') pendingPointerLockAction = null;
         game.breakProgress = 0;
         game.breakingBlock = null;
+        game.breakStage = -1;
+        game.presentation.action = 'idle';
+        game.presentation.actionTime = 0;
     }
 });
 document.addEventListener('contextmenu', (e) => {
@@ -244,19 +283,20 @@ document.addEventListener('wheel', (e) => {
 
 // Mouse look
 document.addEventListener('mousemove', (e) => {
-    if(game.inventoryOpen || game.craftingTableOpen || game.furnaceOpen || game.controlsOverlayOpen) {
+    if(game.inventoryOpen || game.craftingTableOpen || game.furnaceOpen || game.chestOpen || game.controlsOverlayOpen) {
         updateCursorStackPosition(e.clientX, e.clientY);
         return;
     }
     if(game.tradeTarget) return;
     if(!game.pointerLocked) return;
-    game.player.yaw -= e.movementX * 0.002;
-    game.player.pitch -= e.movementY * 0.002;
+    game.player.yaw -= e.movementX * game.settings.mouseSensitivity;
+    game.player.pitch -= e.movementY * game.settings.mouseSensitivity;
     game.player.pitch = Math.max(-Math.PI/2 + 0.01, Math.min(Math.PI/2 - 0.01, game.player.pitch));
 });
 
 // Pointer lock change — handle both prefixed and unprefixed for Safari
 function handlePointerLockChange() {
+    const wasLocked = game.pointerLocked;
     const lockElement = document.pointerLockElement || document.webkitPointerLockElement;
     game.pointerLocked = lockElement === game.canvas;
     game.canvas.style.cursor = game.pointerLocked ? 'none' : 'default';
@@ -272,6 +312,10 @@ function handlePointerLockChange() {
         game.miningKeyHeld = false;
         game.breakProgress = 0;
         game.breakingBlock = null;
+        game.breakStage = -1;
+        game.presentation.action = 'idle';
+        game.presentation.actionTime = 0;
+        if(wasLocked && game.worldLoaded && !game.paused && !isGameplayInputBlocked()) openPauseMenu();
     }
 }
 document.addEventListener('pointerlockchange', handlePointerLockChange);
@@ -284,6 +328,9 @@ function clearInputState() {
     pendingPointerLockAction = null;
     game.breakProgress = 0;
     game.breakingBlock = null;
+    game.breakStage = -1;
+    game.presentation.action = 'idle';
+    game.presentation.actionTime = 0;
 }
 
 window.addEventListener('blur', clearInputState);

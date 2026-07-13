@@ -3,12 +3,29 @@
 // ====== WEBGL SETUP ======
 game.canvas = document.getElementById('game');
 function resizeCanvas() {
-    game.canvas.width = window.innerWidth;
-    game.canvas.height = window.innerHeight;
+    const { cssWidth, cssHeight, width, height, cappedDpr, renderScale, pixelRatio } = CandyCore.computeRenderSize(
+        window.innerWidth, window.innerHeight, window.devicePixelRatio,
+        game.settings.renderScale, game.settings.maxDevicePixelRatio
+    );
+    if(game.canvas.width !== width) game.canvas.width = width;
+    if(game.canvas.height !== height) game.canvas.height = height;
+    game.canvas.style.width = cssWidth + 'px';
+    game.canvas.style.height = cssHeight + 'px';
     if(game.gl) game.gl.viewport(0, 0, game.canvas.width, game.canvas.height);
-    game.projMatrix = mat4_perspective(Math.PI / 180 * 70, game.canvas.width / game.canvas.height, 0.1, 200);
+    game.projMatrix = mat4_perspective(Math.PI / 180 * game.settings.fov, game.canvas.width / game.canvas.height, 0.1, 200);
+    game.renderMetrics = { cssWidth, cssHeight, width, height, cappedDpr, renderScale, pixelRatio };
+}
+function setRenderScale(scale) {
+    const allowed = [0.5, 0.75, 1];
+    const numeric = Number(scale);
+    game.settings.renderScale = allowed.reduce((best, value) =>
+        Math.abs(value - numeric) < Math.abs(best - numeric) ? value : best, 1);
+    resizeCanvas();
+    if(typeof scheduleSaveGame === 'function') scheduleSaveGame();
+    return game.settings.renderScale;
 }
 window.addEventListener('resize', resizeCanvas);
+document.addEventListener('fullscreenchange', resizeCanvas);
 resizeCanvas();
 
 game.gl = game.canvas.getContext('webgl2', { alpha: false, antialias: false });
@@ -130,22 +147,24 @@ function getUniforms(program, names) {
 
 // Terrain shader
 const terrainVS = GLSL_PREAMBLE +
-    'in vec3 aPos;\nin vec2 aUV;\nin float aNorm;\nin float aAO;\n' +
+    'in vec3 aPos;\nin vec2 aUV;\nin float aNorm;\nin float aAO;\nin vec2 aLight;\n' +
     GLSL_UVP_DECL +
     GLSL_CAM_DECL +
-    'out vec2 vUV;\nout float vLight;\n' +
+    'uniform vec3 uSunDir;\nout vec2 vUV;\nout float vLight;\nout vec2 vVoxelLight;\n' +
     GLSL_FOG_VARYING_OUT +
     'void main() {\n' +
     GLSL_TRANSFORM +
     '    vUV = aUV;\n' +
-    makeNormalLighting('0.6', '1.0', '0.4', '0.7', '0.65', '0.8', '0.75') +
+    '    vec3 normal = aNorm < 0.5 ? vec3(-1,0,0) : aNorm < 1.5 ? vec3(1,0,0) : aNorm < 2.5 ? vec3(0,-1,0) : aNorm < 3.5 ? vec3(0,1,0) : aNorm < 4.5 ? vec3(0,0,-1) : vec3(0,0,1);\n' +
+    '    float light = 0.48 + max(0.0, dot(normal, normalize(uSunDir))) * 0.52;\n' +
     '    float ao = 1.0 - aAO * 0.2;\n' +
     '    vLight = light * ao;\n' +
+    '    vVoxelLight = aLight;\n' +
     fogCalc('aPos') +
     '}\n';
 
 const terrainFS = GLSL_PREAMBLE +
-    'in vec2 vUV;\nin float vLight;\n' +
+    'in vec2 vUV;\nin float vLight;\nin vec2 vVoxelLight;\n' +
     GLSL_FOG_VARYING_IN +
     'uniform sampler2D uAtlas;\n' +
     GLSL_DAYLIGHT_FOG_DECL +
@@ -153,38 +172,44 @@ const terrainFS = GLSL_PREAMBLE +
     'void main() {\n' +
     '    vec4 tex = texture(uAtlas, vUV);\n' +
     '    if(tex.a < 0.01) discard;\n' +
-    '    vec3 color = tex.rgb * vLight * uDaylight;\n' +
+    '    float illumination = max(0.045, max(vVoxelLight.x * uDaylight, vVoxelLight.y));\n' +
+    '    vec3 linearColor = pow(tex.rgb, vec3(2.2)) * vLight * illumination;\n' +
+    '    vec3 color = pow(max(linearColor, vec3(0.0)), vec3(1.0 / 2.2));\n' +
     GLSL_APPLY_FOG +
     '    fragColor = vec4(color, tex.a);\n' +
     '}\n';
 
 // Water shader (same structure as terrain but with alpha and wave offset)
 const waterVS = GLSL_PREAMBLE +
-    'in vec3 aPos;\nin vec2 aUV;\nin float aNorm;\nin float aAO;\n' +
+    'in vec3 aPos;\nin vec2 aUV;\nin float aNorm;\nin float aAO;\nin vec2 aLight;\nin float aMaterial;\n' +
     GLSL_UVP_DECL +
     GLSL_CAM_DECL +
-    'out vec2 vUV;\nout float vLight;\n' +
+    'uniform float uTime;\nout vec2 vUV;\nout float vLight;\nout vec2 vVoxelLight;\nout float vMaterial;\n' +
     GLSL_FOG_VARYING_OUT +
     'void main() {\n' +
     '    vec3 pos = aPos;\n' +
-    '    pos.y -= 0.1;\n' +
+    '    if(aMaterial < 0.5) pos.y -= 0.08 + sin(aPos.x * 0.7 + aPos.z * 0.5 + uTime * 1.6) * 0.025;\n' +
     '    gl_Position = uVP * vec4(pos, 1.0);\n' +
-    '    vUV = aUV;\n' +
+    '    vUV = aUV + (aMaterial < 0.5 ? vec2(uTime * 0.003, sin(uTime * 0.7 + aPos.x) * 0.0008) : vec2(0.0));\n' +
     '    vLight = 0.8;\n' +
+    '    vMaterial = aMaterial;\n' +
+    '    vVoxelLight = aLight;\n' +
     fogCalc('pos') +
     '}\n';
 
 const waterFS = GLSL_PREAMBLE +
-    'in vec2 vUV;\nin float vLight;\n' +
+    'in vec2 vUV;\nin float vLight;\nin vec2 vVoxelLight;\nin float vMaterial;\n' +
     GLSL_FOG_VARYING_IN +
     'uniform sampler2D uAtlas;\n' +
     GLSL_DAYLIGHT_FOG_DECL +
     'out vec4 fragColor;\n' +
     'void main() {\n' +
     '    vec4 tex = texture(uAtlas, vUV);\n' +
-    '    vec3 color = tex.rgb * vLight * uDaylight;\n' +
+    '    float illumination = max(0.06, max(vVoxelLight.x * uDaylight, vVoxelLight.y));\n' +
+    '    vec3 color = pow(pow(tex.rgb, vec3(2.2)) * vLight * illumination, vec3(1.0 / 2.2));\n' +
     GLSL_APPLY_FOG +
-    '    fragColor = vec4(color, 0.6);\n' +
+    '    float alpha = vMaterial < 0.5 ? 0.58 : max(0.18, tex.a * 0.72);\n' +
+    '    fragColor = vec4(color, alpha);\n' +
     '}\n';
 
 // Line shader (minimal: uVP transform only)
@@ -236,8 +261,8 @@ if(!game.terrainProgram || !waterProgram || !game.lineProgram || !game.mobProgra
 }
 
 // Get uniform locations via shared helper
-const tUni = getUniforms(game.terrainProgram, ['uVP', 'uCamPos', 'uAtlas', 'uDaylight', 'uFogColor']);
-const wUni = getUniforms(waterProgram, ['uVP', 'uCamPos', 'uAtlas', 'uDaylight', 'uFogColor']);
+const tUni = getUniforms(game.terrainProgram, ['uVP', 'uCamPos', 'uAtlas', 'uDaylight', 'uFogColor', 'uSunDir']);
+const wUni = getUniforms(waterProgram, ['uVP', 'uCamPos', 'uAtlas', 'uDaylight', 'uFogColor', 'uTime']);
 const lUni = getUniforms(game.lineProgram, ['uVP', 'uColor']);
 const mUni = getUniforms(game.mobProgram, ['uVP', 'uCamPos', 'uDaylight', 'uFogColor']);
 
@@ -246,10 +271,13 @@ const tAPos = game.gl.getAttribLocation(game.terrainProgram, 'aPos');
 const tAUV = game.gl.getAttribLocation(game.terrainProgram, 'aUV');
 const tANorm = game.gl.getAttribLocation(game.terrainProgram, 'aNorm');
 const tAAO = game.gl.getAttribLocation(game.terrainProgram, 'aAO');
+const tALight = game.gl.getAttribLocation(game.terrainProgram, 'aLight');
 const wAPos = game.gl.getAttribLocation(waterProgram, 'aPos');
 const wAUV = game.gl.getAttribLocation(waterProgram, 'aUV');
 const wANorm = game.gl.getAttribLocation(waterProgram, 'aNorm');
 const wAAO = game.gl.getAttribLocation(waterProgram, 'aAO');
+const wALight = game.gl.getAttribLocation(waterProgram, 'aLight');
+const wAMaterial = game.gl.getAttribLocation(waterProgram, 'aMaterial');
 const lAPos = game.gl.getAttribLocation(game.lineProgram, 'aPos');
 const mAPos = game.gl.getAttribLocation(game.mobProgram, 'aPos');
 const mAColor = game.gl.getAttribLocation(game.mobProgram, 'aColor');
@@ -259,6 +287,24 @@ game.gl.enable(game.gl.DEPTH_TEST);
 game.gl.enable(game.gl.CULL_FACE);
 game.gl.cullFace(game.gl.BACK);
 game.gl.clearColor(1.0, 0.82, 0.86, 1.0); // #FFD1DC
+
+// Full-screen procedural sky: gradient, wafer sun, peppermint moon and stars.
+const skyProgram = createProgram(
+    GLSL_PREAMBLE +
+    'out vec2 vUV;\nvoid main(){ vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); vUV=p*0.5; gl_Position=vec4(p*2.0-1.0,1.0,1.0); }\n',
+    GLSL_PREAMBLE +
+    'in vec2 vUV; uniform vec3 uTop; uniform vec3 uHorizon; uniform float uDayT; uniform float uDaylight; out vec4 fragColor;\n' +
+    'float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }\n' +
+    'void main(){ vec2 uv=vUV; vec3 color=mix(uHorizon,uTop,smoothstep(0.0,1.0,uv.y));\n' +
+    'float angle=(uDayT-0.25)*6.2831853; vec2 sun=vec2(0.5+cos(angle)*0.37,0.2+sin(angle)*0.58); vec2 moon=vec2(1.0)-sun;\n' +
+    'float sd=length(uv-sun); float md=length(uv-moon); float wafer=step(0.5,fract((uv.x+uv.y)*95.0));\n' +
+    'color=mix(color,mix(vec3(1.0,0.74,0.28),vec3(1.0,0.9,0.58),wafer),smoothstep(0.075,0.055,sd)*smoothstep(-0.1,0.08,sin(angle)));\n' +
+    'float mint=step(0.5,fract(atan(uv.y-moon.y,uv.x-moon.x)*5.0/3.14159)); color=mix(color,mix(vec3(0.96,0.93,1.0),vec3(0.9,0.22,0.46),mint),smoothstep(0.065,0.048,md)*smoothstep(0.1,-0.08,sin(angle)));\n' +
+    'float star=step(0.9975,hash(floor(uv*vec2(520.0,290.0)))); color+=vec3(star*(1.0-uDaylight)*0.75); fragColor=vec4(color,1.0); }\n'
+);
+if(!skyProgram) throw new Error('Failed to create sky shader program');
+const skyUni = getUniforms(skyProgram, ['uTop','uHorizon','uDayT','uDaylight']);
+const skyVAO = game.gl.createVertexArray();
 
 // ====== TEXTURE ATLAS GENERATION ======
 function generateAtlas() {
@@ -295,37 +341,74 @@ function generateAtlas() {
         fillTile(idx, baseColor);
         addNoise(idx, ['#E8C0D0', '#D8B0C0'], 0.15);
         const [tx, ty] = tileXY(idx);
-        for(let i = 0; i < 8; i++) {
+        for(let i = 0; i < 6; i++) {
             const px = Math.floor(hash2D(i*31+idx, i*47) * 14) + 1;
             const py = Math.floor(hash2D(i*53+idx, i*71) * 14) + 1;
             ctx.fillStyle = oreColor;
-            ctx.fillRect(tx+px, ty+py, 2, 2);
+            ctx.fillRect(tx+px, ty+py-1, 1, 4);
+            ctx.fillRect(tx+px-1, ty+py, 3, 2);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(tx+px, ty+py-1, 1, 1);
+        }
+    }
+
+    function drawMarshmallowStone(idx, variant) {
+        fillTile(idx, ['#E9D9E2','#E3D2DE','#F0E2E8','#DDCBD8'][variant]);
+        const [tx, ty] = tileXY(idx);
+        ctx.fillStyle = '#BFA8B8';
+        for(let i = 0; i < 7; i++) {
+            const px = 1 + Math.floor(hash2D(idx*19+i*41, 7) * 13);
+            const py = 1 + Math.floor(hash2D(idx*23+i*37, 11) * 13);
+            ctx.fillRect(tx+px,ty+py,2,1);
+            if(i % 2 === 0) ctx.fillRect(tx+px,ty+py+1,1,1);
+        }
+        ctx.fillStyle = '#FFF6FA';
+        ctx.fillRect(tx+2+variant,ty+3,4,1);
+        ctx.fillRect(tx+11-variant,ty+10,2,1);
+    }
+
+    function drawGrahamCrumb(idx, variant) {
+        fillTile(idx, ['#B87845','#A96839','#C48751','#9B5C34'][variant]);
+        const [tx, ty] = tileXY(idx);
+        ctx.fillStyle = '#704026';
+        ctx.fillRect(tx, ty+7+(variant%2), 16, 1);
+        for(let i = 0; i < 11; i++) {
+            const px = Math.floor(hash2D(idx*31+i*13, 17) * 16);
+            const py = Math.floor(hash2D(idx*47+i*29, 19) * 16);
+            ctx.fillRect(tx+px,ty+py,1+(i%3===0?1:0),1);
+        }
+        ctx.fillStyle = '#E0AC72';
+        for(let x=2+(variant%2);x<16;x+=5) ctx.fillRect(tx+x,ty+3,1,1);
+    }
+
+    function drawWafer(idx, variant, side) {
+        if(side) drawGrahamCrumb(idx, variant);
+        else fillTile(idx, ['#F36F9B','#EA638E','#FF82AA','#D95882'][variant]);
+        const [tx, ty] = tileXY(idx);
+        if(side) {
+            ctx.fillStyle = '#F36F9B'; ctx.fillRect(tx,ty,16,3);
+            for(let x=variant;x<16;x+=4) ctx.fillRect(tx+x,ty+3,2,1+(x%3));
+        } else {
+            ctx.strokeStyle = '#B83E68'; ctx.lineWidth = 1;
+            for(let p=variant%2;p<16;p+=4) {
+                ctx.beginPath(); ctx.moveTo(tx+p,ty); ctx.lineTo(tx+p,ty+16); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(tx,ty+p); ctx.lineTo(tx+16,ty+p); ctx.stroke();
+            }
+            ctx.fillStyle='#FFD4E2'; ctx.fillRect(tx+2+variant,ty+2,2,1);
         }
     }
 
     // Tile 0: Stone
-    fillTile(0, '#F5D5E0');
-    addNoise(0, ['#E8C0D0', '#EDD0DA', '#DFB5C5'], 0.2);
+    drawMarshmallowStone(0, 0);
 
     // Tile 1: Dirt
-    fillTile(1, '#E8B4C8');
-    addNoise(1, ['#D9A0B5', '#DDA8BC', '#CFA0B0'], 0.25);
+    drawGrahamCrumb(1, 0);
 
     // Tile 2: Grass top
-    fillTile(2, '#FFB6C1');
-    addNoise(2, ['#FF9FB0', '#FFA8B8', '#FFD0D8'], 0.3);
+    drawWafer(2, 0, false);
 
     // Tile 3: Grass side (dirt with grass strip on top)
-    fillTile(3, '#E8B4C8');
-    addNoise(3, ['#D9A0B5', '#DDA8BC'], 0.2);
-    {
-        const [tx, ty] = tileXY(3);
-        ctx.fillStyle = '#FFB6C1';
-        ctx.fillRect(tx, ty, tileSize, 3);
-        for(let px = 0; px < tileSize; px++) {
-            if(hash2D(px, 333) > 0.5) ctx.fillRect(tx+px, ty+3, 1, 1);
-        }
-    }
+    drawWafer(3, 0, true);
 
     // Tile 4: Sand
     fillTile(4, '#FFF8F0');
@@ -349,18 +432,18 @@ function generateAtlas() {
     }
 
     // Tile 6: Wood bark
-    fillTile(6, '#FADCE6');
+    fillTile(6, '#70402C');
     {
         const [tx, ty] = tileXY(6);
         for(let px = 0; px < tileSize; px += 3) {
-            ctx.fillStyle = '#E8C0D0';
+            ctx.fillStyle = px % 2 ? '#43251C' : '#9B6042';
             ctx.fillRect(tx+px, ty, 1, tileSize);
         }
-        addNoise(6, ['#EDD0DA'], 0.08);
+        addNoise(6, ['#B77A55'], 0.08);
     }
 
     // Tile 7: Wood top (rings)
-    fillTile(7, '#FADCE6');
+    fillTile(7, '#8A5337');
     {
         const [tx, ty] = tileXY(7);
         const cx = 8, cy = 8;
@@ -368,7 +451,7 @@ function generateAtlas() {
             for(let px = 0; px < tileSize; px++) {
                 const d = Math.sqrt((px-cx)*(px-cx)+(py-cy)*(py-cy));
                 if(Math.floor(d) % 3 === 0) {
-                    ctx.fillStyle = '#E8C0D0';
+                    ctx.fillStyle = d < 4 ? '#D09468' : '#4A291F';
                     ctx.fillRect(tx+px, ty+py, 1, 1);
                 }
             }
@@ -576,6 +659,36 @@ function generateAtlas() {
         }
     }
 
+    for(let variant=1; variant<4; variant++) {
+        drawMarshmallowStone(39+variant, variant);
+        drawGrahamCrumb(42+variant, variant);
+        drawWafer(45+variant, variant, false);
+        drawWafer(48+variant, variant, true);
+    }
+    // Utility blocks — original candy-pixel silhouettes.
+    drawWafer(60,2,false); { const [x,y]=tileXY(60);ctx.fillStyle='#7A2948';ctx.fillRect(x+2,y+4,12,9);ctx.fillStyle='#FFD85C';ctx.fillRect(x+7,y+7,2,3); }
+    drawGrahamCrumb(61,2); { const [x,y]=tileXY(61);ctx.fillStyle='#FFF0F5';ctx.fillRect(x,y,16,4);ctx.fillStyle='#7A2948';ctx.fillRect(x+1,y+4,14,1); }
+    drawWafer(62,1,true); { const [x,y]=tileXY(62);ctx.fillStyle='#4A291F';ctx.fillRect(x+2,y+2,12,12);ctx.fillStyle='#FFD85C';ctx.fillRect(x+11,y+7,2,2); }
+    fillTile(63,'#FFF8F0'); { const [x,y]=tileXY(63);for(let p=-12;p<20;p+=7){ctx.fillStyle='#F13B55';ctx.fillRect(x+p,y,3,16);} }
+    fillTile(64,'rgba(0,0,0,0)'); { const [x,y]=tileXY(64);ctx.fillStyle='#9B5C34';ctx.fillRect(x+3,y,2,16);ctx.fillRect(x+11,y,2,16);for(let p=2;p<16;p+=4)ctx.fillRect(x+3,y+p,10,2); }
+    drawGrahamCrumb(65,3); { const [x,y]=tileXY(65);ctx.fillStyle='#4A291F';ctx.fillRect(x+2,y+4,12,1);ctx.fillRect(x+4,y+8,8,1); }
+    drawWafer(66,2,true);
+    fillTile(67,'#FFF5FA'); { const [x,y]=tileXY(67);ctx.fillStyle='#FF8DB6';ctx.fillRect(x,y+10,16,6);ctx.fillStyle='#D6C2CF';ctx.fillRect(x,y+9,16,1); }
+    fillTile(68,'#FFD85C'); { const [x,y]=tileXY(68);ctx.fillStyle='#FFF4A8';ctx.fillRect(x+3,y+3,10,10);ctx.fillStyle='#FF7A32';ctx.fillRect(x+6,y,4,3);ctx.fillRect(x+6,y+13,4,3); }
+    drawGrahamCrumb(69,3);{const[x,y]=tileXY(69);ctx.fillStyle='#FFF0F5';for(let p=1;p<16;p+=4)ctx.fillRect(x+p,y,2,16);}
+    drawGrahamCrumb(70,3);{const[x,y]=tileXY(70);ctx.fillStyle='#9EDBFF';for(let p=1;p<16;p+=4)ctx.fillRect(x+p,y,2,16);}
+    fillTile(71,'rgba(0,0,0,0)');{const[x,y]=tileXY(71);ctx.fillStyle='#E3B45F';ctx.fillRect(x+7,y+3,2,13);for(let p=4;p<13;p+=3){ctx.fillRect(x+4,y+p,3,2);ctx.fillRect(x+9,y+p+1,3,2);}}
+    fillTile(72,'rgba(0,0,0,0)');{const[x,y]=tileXY(72);ctx.fillStyle='#F7F0C0';ctx.fillRect(x+4,y,3,16);ctx.fillRect(x+10,y,3,16);ctx.fillStyle='#E13B70';ctx.fillRect(x+4,y+5,3,2);ctx.fillRect(x+10,y+10,3,2);}
+    fillTile(73,'rgba(0,0,0,0)');{const[x,y]=tileXY(73);ctx.fillStyle='#79B844';ctx.fillRect(x+2,y+5,12,9);ctx.fillStyle='#E13B70';ctx.fillRect(x+4,y+7,3,3);ctx.fillRect(x+10,y+10,3,3);}
+    for(let stage=0;stage<4;stage++){const idx=74+stage,[x,y]=tileXY(idx),height=4+stage*4;fillTile(idx,'rgba(0,0,0,0)');ctx.fillStyle='#E3B45F';ctx.fillRect(x+7,y+16-height,2,height);if(stage>1){ctx.fillRect(x+4,y+7,3,2);ctx.fillRect(x+9,y+10,3,2);}}
+    for(let stage=0;stage<4;stage++){const idx=78+stage,[x,y]=tileXY(idx),size=4+stage*3;fillTile(idx,'rgba(0,0,0,0)');ctx.fillStyle='#79B844';ctx.fillRect(x+8-size/2,y+15-size,size,size);if(stage===3){ctx.fillStyle='#E13B70';ctx.fillRect(x+4,y+8,3,3);ctx.fillRect(x+10,y+11,3,3);}}
+    for(let stage=0;stage<4;stage++){const idx=82+stage,[x,y]=tileXY(idx),height=4+stage*4;fillTile(idx,'rgba(0,0,0,0)');ctx.fillStyle='#F7F0C0';ctx.fillRect(x+5,y+16-height,2,height);ctx.fillRect(x+10,y+16-height,2,height);}
+    fillTile(86,'rgba(0,0,0,0)');{const[x,y]=tileXY(86);ctx.fillStyle='#E13B70';ctx.fillRect(x,y+7,16,3);ctx.fillRect(x+7,y,3,16);ctx.fillStyle='#FF9ABB';ctx.fillRect(x+7,y+7,3,3);}
+    fillTile(87,'#F7F0C0');{const[x,y]=tileXY(87);ctx.fillStyle='#8A5337';ctx.fillRect(x+6,y+3,4,10);ctx.fillStyle='#E13B70';ctx.fillRect(x+5,y+2,6,4);}
+    fillTile(88,'#FFF0F5');{const[x,y]=tileXY(88);ctx.fillStyle='#C57B9B';ctx.fillRect(x+1,y+11,14,3);}
+    fillTile(89,'#9C7AF4');{const[x,y]=tileXY(89);ctx.fillStyle='#FFF0F5';ctx.fillRect(x+2,y+7,12,2);ctx.fillStyle='#FFD85C';ctx.fillRect(x+5,y+5,2,6);ctx.fillRect(x+10,y+5,2,6);}
+    fillTile(90,'#57B8D9');{const[x,y]=tileXY(90);ctx.fillStyle='#3D1525';ctx.fillRect(x+6,y+3,4,8);ctx.fillRect(x+4,y+9,4,4);ctx.fillStyle='#FFF0F5';ctx.fillRect(x+9,y+2,2,2);}
+
     game.atlasCanvas = c2d;
 
     // Upload to WebGL
@@ -626,23 +739,23 @@ let cUni;
 {
     cloudProgram = createProgram(
         GLSL_PREAMBLE +
-        'in vec3 aPos;\nin vec2 aUV;\n' +
+        'in vec3 aPos;\nin vec2 aUV; uniform float uHeight;\n' +
         GLSL_UVP_DECL +
         'out vec2 vUV;\n' +
         'void main() {\n' +
-        GLSL_TRANSFORM +
+        '    gl_Position = uVP * vec4(aPos + vec3(0.0,uHeight,0.0), 1.0);\n' +
         '    vUV = aUV;\n' +
         '}\n',
         GLSL_PREAMBLE +
-        'in vec2 vUV;\nuniform sampler2D uTex;\nuniform vec2 uOffset;\nout vec4 fragColor;\n' +
+        'in vec2 vUV;\nuniform sampler2D uTex;\nuniform vec2 uOffset;\nuniform float uAlpha;\nout vec4 fragColor;\n' +
         'void main() {\n' +
         '    vec4 c = texture(uTex, vUV + uOffset);\n' +
         '    if(c.a < 0.05) discard;\n' +
-        '    fragColor = c;\n' +
+        '    fragColor = vec4(c.rgb, c.a * uAlpha);\n' +
         '}\n'
     );
     if(!cloudProgram) throw new Error('Failed to create cloud shader program');
-    cUni = getUniforms(cloudProgram, ['uVP', 'uTex', 'uOffset']);
+    cUni = getUniforms(cloudProgram, ['uVP', 'uTex', 'uOffset', 'uHeight', 'uAlpha']);
     const S = 200;
     const verts = new Float32Array([
         -S,58,-S, 0,0,  S,58,-S, 8,0,  S,58,S, 8,8,

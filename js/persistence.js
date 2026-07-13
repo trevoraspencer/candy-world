@@ -1,11 +1,14 @@
 'use strict';
 
-const SAVE_KEY = 'candy-world-save-v2';
-const SAVE_BACKUP_KEY = SAVE_KEY + '-backup';
+const EVIDENCE_SLOT=new URLSearchParams(location.search).get('evidenceSlot');
+let ACTIVE_WORLD_SLOT=localStorage.getItem('candy-world-active-slot')||'slot-1';
+function saveKeyForSlot(slot){return slot==='slot-1'?'candy-world-save-v2':'candy-world-save-v2-'+slot;}
+let SAVE_KEY=EVIDENCE_SLOT?'candy-world-evidence-'+EVIDENCE_SLOT.replace(/[^a-z0-9_-]/gi,'').slice(0,24):saveKeyForSlot(ACTIVE_WORLD_SLOT),SAVE_BACKUP_KEY=SAVE_KEY+'-backup';
+function selectWorldSlot(slot){if(!/^slot-[1-3]$/.test(slot))return false;ACTIVE_WORLD_SLOT=slot;SAVE_KEY=saveKeyForSlot(slot);SAVE_BACKUP_KEY=SAVE_KEY+'-backup';game.worldSlot=slot;localStorage.setItem('candy-world-active-slot',slot);loadedSave=null;preloadedSave=null;saveLoadAttempted=false;return true;}
 // Older builds stored the save under this accidental all-asterisks key.
 // loadSavedGame() migrates it to SAVE_KEY once, so existing saves survive.
 const LEGACY_SAVE_KEY = '***********************';
-const CURRENT_SAVE_VERSION = 2;
+const CURRENT_SAVE_VERSION = 4;
 const MAX_SAVED_BLOCK_EDITS = 300000;
 const MAX_SAVED_PETS = 80;
 const MAX_SAVED_INVENTORY_SLOTS = 36;
@@ -15,6 +18,7 @@ let loadedSave = null;
 let loadedSaveSource = null;
 let saveLoadAttempted = false;
 let saveDirty = false;
+let saveDirtyVersion = 0;
 // saveErrored is now game.saveErrored (initialized in state.js)
 
 // --- Save format migration ---
@@ -28,8 +32,23 @@ function migrateV1ToV2(save) {
     return save;
 }
 
+function migrateV2ToV3(save) {
+    if(!Number.isInteger(save.generatorVersion)) save.generatorVersion=1;
+    if(!save.worldRules) {
+        save.worldRules = {
+            mode: save.creativeMode ? 'creative' : 'survival',
+            difficulty: save.creativeMode ? 'peaceful' : 'gentle'
+        };
+    }
+    if(!save.weather) save.weather = { type:'clear', intensity:0, scheduleIndex:-1 };
+    return save;
+}
+function migrateV3ToV4(save){if(!Array.isArray(save.blockEntities))save.blockEntities=[];if(!Array.isArray(save.blockStates))save.blockStates=[];if(!Array.isArray(save.itemDrops))save.itemDrops=[];return save;}
+
 const SAVE_MIGRATIONS = {
-    1: migrateV1ToV2
+    1: migrateV1ToV2,
+    2: migrateV2ToV3,
+    3: migrateV3ToV4
 };
 
 function getSaveVersion(save) {
@@ -63,8 +82,11 @@ function blockEditKey(x, y, z) {
     return x + ',' + y + ',' + z;
 }
 
+function indexBlockEdit(x,y,z,blockId){const key=blockEditKey(x,y,z),chunk=chunkKey(x>>4,z>>4);let bucket=game.modifiedBlocksByChunk.get(chunk);if(!game.modifiedBlocks.has(key)){if(bucket){bucket.delete(key);if(!bucket.size)game.modifiedBlocksByChunk.delete(chunk);}return;}if(!bucket){bucket=new Map();game.modifiedBlocksByChunk.set(chunk,bucket);}bucket.set(key,blockId);}
+
 function recordBlockEdit(x, y, z, blockId) {
-    game.modifiedBlocks.set(blockEditKey(x, y, z), blockId);
+    const key=blockEditKey(x,y,z),baseline=generateChunk(x>>4,z>>4)[blockIndex(x&15,y,z&15)];game.modifiedBlocks=CandyCore.compactBlockEdit(game.modifiedBlocks,key,blockId,baseline);
+    indexBlockEdit(x,y,z,blockId);
     scheduleSaveGame();
 }
 
@@ -90,7 +112,7 @@ function isValidItemId(itemId) {
 function sanitizeInventorySlot(slot) {
     if(!isSaveObject(slot) || !isValidItemId(slot.id) || !Number.isInteger(slot.count) || slot.count <= 0) return null;
     const maxStack = typeof getItemMaxStack === 'function' ? getItemMaxStack(slot.id) : 64;
-    return { id: slot.id, count: Math.min(slot.count, maxStack) };
+    const clean={ id: slot.id, count: Math.min(slot.count, maxStack) };if(typeof isToolItem==='function'&&isToolItem(slot.id)){const max=getToolMaxDurability(slot.id);clean.durability=clampNumber(Number(slot.durability)||max,1,max);}return clean;
 }
 
 function sanitizePetName(name, type) {
@@ -219,6 +241,9 @@ function sanitizeSavedPets(pets, stats) {
             z: clampNumber(petData.z, 1, WORLD_D - 2)
         };
         if(Number.isFinite(petData.y)) pet.y = clampNumber(petData.y, 1, CHUNK_H - 2);
+        pet.breedCooldown=clampNumber(Number(petData.breedCooldown)||0,0,600);
+        pet.age=clampNumber(Number(petData.age)||0,0,300);
+        pet.command=['follow','sit','wander'].includes(petData.command)?petData.command:'follow';pet.affection=clampNumber(Number(petData.affection)||0,0,100);
         clean.push(pet);
     }
     return clean;
@@ -250,6 +275,8 @@ function sanitizeQuestSave(quests, stats) {
         if(Array.isArray(saved.craftedTreatTypes)) {
             q.craftedTreatTypes = saved.craftedTreatTypes.slice(0, 16);
         }
+        if(Array.isArray(saved.unique))q.unique=saved.unique.slice(0,32);
+        q.discovered=!!saved.discovered;
         clean[key] = q;
     }
     if(Array.isArray(quests._pendingRewards)) {
@@ -283,6 +310,49 @@ function normalizeSave(save, diagnostics) {
 
     if(Number.isFinite(migrated.savedAt)) clean.savedAt = Math.max(0, Math.floor(migrated.savedAt));
     clean.creativeMode = !!migrated.creativeMode;
+    clean.generatorVersion=Number.isInteger(migrated.generatorVersion)?clampNumber(migrated.generatorVersion,1,2):1;
+    clean.worldSeed=typeof migrated.worldSeed==='string'&&migrated.worldSeed.trim()?migrated.worldSeed.trim().slice(0,48):'legacy-candy-world';
+    clean.worldName=typeof migrated.worldName==='string'&&migrated.worldName.trim()?migrated.worldName.replace(/[<>]/g,'').trim().slice(0,32):'Legacy Candy World';
+    clean.worldSlot=/^slot-[1-3]$/.test(migrated.worldSlot)?migrated.worldSlot:ACTIVE_WORLD_SLOT;
+    const validModes=['survival','cozy','creative'];
+    const validDifficulties=['peaceful','gentle','standard'];
+    if(isSaveObject(migrated.worldRules)) {
+        clean.worldRules={
+            mode:validModes.includes(migrated.worldRules.mode)?migrated.worldRules.mode:(clean.creativeMode?'creative':'survival'),
+            difficulty:validDifficulties.includes(migrated.worldRules.difficulty)?migrated.worldRules.difficulty:'gentle'
+        };
+    }
+    if(isSaveObject(migrated.weather)&&typeof migrated.weather.type==='string') {
+        clean.weather={type:migrated.weather.type,intensity:clampNumber(Number(migrated.weather.intensity)||0,0,1),scheduleIndex:Number.isInteger(migrated.weather.scheduleIndex)?migrated.weather.scheduleIndex:-1};
+    }
+    if(isSaveObject(migrated.settings)) {
+        clean.settings={};
+        for(const key of Object.keys(game.settings)) {
+            const value=migrated.settings[key];
+            if(typeof value===typeof game.settings[key]) clean.settings[key]=value;
+        }
+    }
+    if(isSaveObject(migrated.tutorial)) {
+        clean.tutorial={step:clampNumber(Math.floor(Number(migrated.tutorial.step)||0),0,7),dismissed:!!migrated.tutorial.dismissed,movementTime:0};
+    }
+    if(isSaveObject(migrated.spawnPoint)&&Number.isFinite(migrated.spawnPoint.x)&&Number.isFinite(migrated.spawnPoint.y)&&Number.isFinite(migrated.spawnPoint.z)) {
+        clean.spawnPoint={x:clampNumber(migrated.spawnPoint.x,.5,WORLD_W-.5),y:clampNumber(migrated.spawnPoint.y,1,CHUNK_H-1),z:clampNumber(migrated.spawnPoint.z,.5,WORLD_D-.5)};
+    }
+    if(Array.isArray(migrated.blockEntities)) {
+        clean.blockEntities=[];
+        for(const record of migrated.blockEntities.slice(0,10000)) {
+            if(!Array.isArray(record)||record.length!==2||typeof record[0]!=='string'||!isSaveObject(record[1])||!['oven','chest'].includes(record[1].type))continue;
+            const coords=record[0].split(',').map(Number);if(coords.length!==3||!isWorldBlockCoord(coords[0],coords[1],coords[2]))continue;
+            const state=record[1];
+            if(state.type==='oven'){const oven={type:'oven',input:sanitizeInventorySlot(state.input),fuel:sanitizeInventorySlot(state.fuel),output:sanitizeInventorySlot(state.output),burnTime:clampNumber(Number(state.burnTime)||0,0,300),progress:clampNumber(Number(state.progress)||0,0,OVEN_SMELT_TIME),lit:!!state.lit,lastSimulationTime:clampNumber(Number(state.lastSimulationTime)||Date.now(),0,Date.now()+60000)};clean.blockEntities.push([record[0],oven]);}
+            else {const slots=new Array(27).fill(null);if(Array.isArray(state.slots))for(let i=0;i<27;i++)slots[i]=sanitizeInventorySlot(state.slots[i]);clean.blockEntities.push([record[0],{type:'chest',slots,structure:typeof state.structure==='string'?state.structure.slice(0,32):'',opened:!!state.opened}]);}
+        }
+    }
+    if(Array.isArray(migrated.blockStates)){clean.blockStates=[];for(const record of migrated.blockStates.slice(0,100000)){if(!Array.isArray(record)||record.length!==2||typeof record[0]!=='string'||!isSaveObject(record[1]))continue;const coords=record[0].split(',').map(Number);if(coords.length!==3||!isWorldBlockCoord(coords[0],coords[1],coords[2]))continue;const state=record[1];clean.blockStates.push([record[0],{facing:clampNumber(Math.floor(Number(state.facing)||0),0,3),open:!!state.open,text:typeof state.text==='string'?state.text.replace(/[<>]/g,'').slice(0,40):'',connections:clampNumber(Math.floor(Number(state.connections)||0),0,15),growth:clampNumber(Math.floor(Number(state.growth)||0),0,7),hydrated:!!state.hydrated,on:!!state.on,powered:!!state.powered,manualOn:state.manualOn!==false,delay:clampNumber(Math.floor(Number(state.delay)||4),1,20),pulseTick:Math.max(0,Math.floor(Number(state.pulseTick)||0)),pulseUntil:Math.max(0,Math.floor(Number(state.pulseUntil)||0)),note:clampNumber(Math.floor(Number(state.note)||0),0,7)}]);}}
+    if(Array.isArray(migrated.itemDrops)) {
+        clean.itemDrops=[];
+        for(const drop of migrated.itemDrops.slice(0,MAX_ITEM_DROPS))if(isSaveObject(drop)&&isValidItemId(drop.id)&&Number.isInteger(drop.count)&&drop.count>0&&Number.isFinite(drop.x)&&Number.isFinite(drop.y)&&Number.isFinite(drop.z))clean.itemDrops.push({id:drop.id,count:Math.min(drop.count,getItemMaxStack(drop.id)),x:clampNumber(drop.x,.5,WORLD_W-.5),y:clampNumber(drop.y,0,CHUNK_H-1),z:clampNumber(drop.z,.5,WORLD_D-.5),vx:0,vy:0,vz:0,age:Math.max(.4,Number(drop.age)||.4),spin:Number(drop.spin)||0});
+    }
 
     const player = sanitizePlayerSave(migrated.player);
     if(player) {
@@ -309,6 +379,7 @@ function normalizeSave(save, diagnostics) {
         clean.tamedPets = sanitizeSavedPets(migrated.tamedPets, stats);
         hasPayload = true;
     }
+    if(Array.isArray(migrated.persistentEntities)){clean.persistentEntities=[];for(const entity of migrated.persistentEntities.slice(0,MAX_SAVED_PETS)){if(!isSaveObject(entity)||!Number.isInteger(entity.type)||!MOB_NAMES[entity.type]||!Number.isFinite(entity.x)||!Number.isFinite(entity.y)||!Number.isFinite(entity.z))continue;clean.persistentEntities.push({type:entity.type,x:clampNumber(entity.x,1,WORLD_W-2),y:clampNumber(entity.y,1,CHUNK_H-2),z:clampNumber(entity.z,1,WORLD_D-2),baby:!!entity.baby,age:clampNumber(Number(entity.age)||0,0,300),breedCooldown:clampNumber(Number(entity.breedCooldown)||0,0,600),reputation:clampNumber(Number(entity.reputation)||0,-100,100)});}hasPayload=true;}
 
     const quests = sanitizeQuestSave(migrated.quests, stats);
     if(quests) {
@@ -418,6 +489,8 @@ function loadSavedGame() {
     return loadedSave;
 }
 
+async function loadSavedGameAsync(){const local=loadSavedGame();if(local)return local;try{const raw=await CandyDB.read(SAVE_KEY);if(!raw)return null;const parsed=normalizeSave(JSON.parse(raw),createSaveDiagnostics());if(parsed){loadedSave=parsed;loadedSaveSource='indexeddb';return parsed;}}catch(error){console.warn('IndexedDB recovery failed:',error);}return null;}
+
 function applySavedBlocks() {
     if(!loadedSave) loadSavedGame();
     if(!loadedSave || !Array.isArray(loadedSave.blocks)) return;
@@ -432,8 +505,10 @@ function applySavedBlocks() {
             if(!isValidBlockId(blockId)) continue;
             setBlock(x, y, z, blockId);
             game.modifiedBlocks.set(blockEditKey(x, y, z), blockId);
+            indexBlockEdit(x,y,z,blockId);
         }
     } finally {
+        game.modifiedBlocksByChunk=CandyCore.groupBlockEdits(game.modifiedBlocks,WORLD_CZ);
         game.worldLoaded = wasLoaded;
     }
 }
@@ -457,8 +532,28 @@ function noteDroppedSavedPet() {
 }
 
 function applySavedPlayerState() {
+    document.getElementById('load-text').textContent='Restoring player profile...';
     if(!loadedSave) loadSavedGame();
     if(!loadedSave) return;
+
+    game.generatorVersion=loadedSave.generatorVersion||1;
+    game.worldSeed=typeof loadedSave.worldSeed==='string'?loadedSave.worldSeed:'legacy-candy-world';game.worldName=typeof loadedSave.worldName==='string'?loadedSave.worldName:'Legacy Candy World';
+
+    if(isSaveObject(loadedSave.worldRules)) {
+        game.worldMode=loadedSave.worldRules.mode;
+        game.difficulty=loadedSave.worldRules.difficulty;
+    }
+    if(isSaveObject(loadedSave.weather)) game.weather={...game.weather,...loadedSave.weather};
+    if(isSaveObject(loadedSave.settings)) {
+        for(const key of Object.keys(game.settings)) if(Object.prototype.hasOwnProperty.call(loadedSave.settings,key)) game.settings[key]=loadedSave.settings[key];
+        applyLiveSettings();
+    }
+    if(isSaveObject(loadedSave.tutorial)) game.tutorial={...game.tutorial,...loadedSave.tutorial};
+    if(isSaveObject(loadedSave.spawnPoint)) game.spawnPoint={...loadedSave.spawnPoint};
+    if(Array.isArray(loadedSave.blockEntities))game.blockEntities=new Map(loadedSave.blockEntities);
+    if(Array.isArray(loadedSave.blockStates))game.blockStates=new Map(loadedSave.blockStates);
+    if(Array.isArray(loadedSave.itemDrops))game.itemDrops=loadedSave.itemDrops.map(drop=>({...drop}));
+    document.getElementById('load-text').textContent='Restoring companions...';
 
     if(isSaveObject(loadedSave.player)) {
         const p = loadedSave.player;
@@ -499,6 +594,11 @@ function applySavedPlayerState() {
         populateCreativeInventory();
     }
 
+    if(Array.isArray(loadedSave.persistentEntities)){
+        game.mobs.length=0;
+        for(const entity of loadedSave.persistentEntities){const mob=spawnMob(entity.type,entity.x,entity.y,entity.z,entity.baby);if(!mob)break;mob.age=entity.age||0;mob.breedCooldown=entity.breedCooldown||0;mob.reputation=entity.reputation||0;}
+    }
+
     // Restore tamed pets
     if(Array.isArray(loadedSave.tamedPets)) {
         for(const petData of loadedSave.tamedPets) {
@@ -527,7 +627,10 @@ function applySavedPlayerState() {
                 trades: null,
                 built: false,
                 tamed: true,
+                breedCooldown:petData.breedCooldown||0,
+                age:petData.age||0,
                 petName: sanitizePetName(petData.name, petData.type),
+                petCommand:petData.command||'follow',affection:petData.affection||0,
                 animTime: 0,
                 headYaw: 0,
                 variant: hash2D(Math.floor(px * 19.3 + pz * 7.7), Math.floor(py * 3.1 + petData.type * 11)),
@@ -541,10 +644,12 @@ function applySavedPlayerState() {
         }
     }
 
+    document.getElementById('load-text').textContent='Restoring Quest Book...';
     // Restore quest state
     if(typeof loadQuestSaveData === 'function') {
         loadQuestSaveData(loadedSave.quests);
     }
+    document.getElementById('load-text').textContent='Restoring discoveries...';
 
     // Restore visited biomes
     if(Array.isArray(loadedSave.visitedBiomes)) {
@@ -587,11 +692,16 @@ function serializeTamedPets() {
             name: sanitizePetName(mob.petName, mob.type),
             x: clampNumber(mob.x, 1, WORLD_W - 2),
             y: clampNumber(mob.y, 1, CHUNK_H - 2),
-            z: clampNumber(mob.z, 1, WORLD_D - 2)
+            z: clampNumber(mob.z, 1, WORLD_D - 2),
+            breedCooldown:clampNumber(Number(mob.breedCooldown)||0,0,600),
+            age:clampNumber(Number(mob.age)||0,0,300)
+            ,command:['follow','sit','wander'].includes(mob.petCommand)?mob.petCommand:'follow',affection:clampNumber(Number(mob.affection)||0,0,100)
         });
     }
     return pets;
 }
+
+function serializePersistentEntities(){return game.mobs.filter(mob=>mob&&!mob.tamed&&(mob.baby||(mob.breedCooldown||0)>0||mob.type===MOB_CANDY_VILLAGER||mob.type===MOB_GINGER_VILLAGER)).slice(0,MAX_SAVED_PETS).map(mob=>({type:mob.type,x:clampNumber(mob.x,1,WORLD_W-2),y:clampNumber(mob.y,1,CHUNK_H-2),z:clampNumber(mob.z,1,WORLD_D-2),baby:!!mob.baby,age:clampNumber(Number(mob.age)||0,0,300),breedCooldown:clampNumber(Number(mob.breedCooldown)||0,0,600),reputation:clampNumber(Number(mob.reputation)||0,-100,100)}));}
 
 function serializeVisitedBiomes() {
     return sanitizeVisitedBiomes(game.visitedBiomes, {
@@ -602,13 +712,22 @@ function serializeVisitedBiomes() {
 function serializeRecipeGuide() {
     return typeof sanitizeRecipeGuide === 'function' ? sanitizeRecipeGuide(game.recipeGuide) : null;
 }
+function serializeBlockEntities(){return Array.from(game.blockEntities.entries()).map(([key,state])=>state.type==='chest'?[key,{type:'chest',slots:state.slots.map(slot=>slot?{...slot}:null),structure:state.structure||'',opened:!!state.opened}]:[key,{type:state.type,input:state.input?{...state.input}:null,fuel:state.fuel?{...state.fuel}:null,output:state.output?{...state.output}:null,burnTime:state.burnTime||0,progress:state.progress||0,lit:!!state.lit,lastSimulationTime:state.lastSimulationTime||Date.now()}]);}
+function serializeBlockStates(){return Array.from(game.blockStates.entries()).map(([key,state])=>[key,{facing:state.facing||0,open:!!state.open,text:String(state.text||'').replace(/[<>]/g,'').slice(0,40),connections:state.connections||0,growth:state.growth||0,hydrated:!!state.hydrated,on:!!state.on,powered:!!state.powered,manualOn:state.manualOn!==false,delay:state.delay||4,pulseTick:state.pulseTick||0,pulseUntil:state.pulseUntil||0,note:state.note||0}]);}
+function serializeItemDrops(){return game.itemDrops.slice(0,MAX_ITEM_DROPS).map(drop=>({id:drop.id,count:drop.count,x:drop.x,y:drop.y,z:drop.z,age:drop.age,spin:drop.spin}));}
 
 function buildSaveData() {
     return {
         version: CURRENT_SAVE_VERSION,
         schemaVersion: CURRENT_SAVE_VERSION,
+        generatorVersion: game.generatorVersion,
+        worldSeed:game.worldSeed,worldName:game.worldName,worldSlot:game.worldSlot,
         savedAt: Date.now(),
         creativeMode: game.creativeMode,
+        worldRules: { mode:game.worldMode, difficulty:game.difficulty },
+        settings: { ...game.settings },
+        tutorial: { ...game.tutorial },
+        spawnPoint: { ...game.spawnPoint },
         player: {
             x: game.player.x,
             y: game.player.y,
@@ -622,11 +741,16 @@ function buildSaveData() {
         },
         inventory: serializeInventory(),
         dayTime: game.dayTime,
+        weather: { type:game.weather.type, intensity:game.weather.intensity, scheduleIndex:game.weather.scheduleIndex },
         blocks: serializeBlockEdits(),
         tamedPets: serializeTamedPets(),
+        persistentEntities: serializePersistentEntities(),
         quests: typeof getQuestSaveData === 'function' ? getQuestSaveData() : {},
         visitedBiomes: serializeVisitedBiomes(),
-        recipeGuide: serializeRecipeGuide()
+        recipeGuide: serializeRecipeGuide(),
+        blockEntities: serializeBlockEntities(),
+        blockStates: serializeBlockStates(),
+        itemDrops: serializeItemDrops()
     };
 }
 
@@ -654,6 +778,7 @@ function saveGameNow() {
     if(!game.worldLoaded) return;
     if(!saveDirty) return;
 
+    const capturedVersion=saveDirtyVersion;
     let serialized;
     try {
         serialized = JSON.stringify(buildSaveData());
@@ -669,20 +794,23 @@ function saveGameNow() {
         localStorage.setItem(SAVE_KEY, serialized);
         ensureInitialSaveBackup(serialized);
         loadedSaveSource = 'primary';
-        saveDirty = false;
+        if(CandyCore.isCurrentSaveGeneration(capturedVersion,saveDirtyVersion))saveDirty = false;
         game.saveErrored = false; // clear the HUD warning once a save succeeds
     } catch (err) {
         console.warn('Failed to save game:', err);
         saveDirty = true; // remain dirty so we retry next change
         game.saveErrored = true;
     }
+    CandyDB.write(SAVE_KEY,serialized).then(()=>{if(CandyCore.isCurrentSaveGeneration(capturedVersion,saveDirtyVersion)){saveDirty=false;game.saveErrored=false;}}).catch(err=>{console.warn('Checkpoint save failed:',err);if(CandyCore.isCurrentSaveGeneration(capturedVersion,saveDirtyVersion)&&!localStorage.getItem(SAVE_KEY)){saveDirty=true;game.saveErrored=true;}});
 }
 
 function scheduleSaveGame() {
     if(!game.worldLoaded) return;
     saveDirty = true;
+    saveDirtyVersion++;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveGameNow, 500);
 }
 
 window.addEventListener('beforeunload', saveGameNow);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')saveGameNow();});window.addEventListener('pagehide',saveGameNow);

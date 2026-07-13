@@ -14,89 +14,37 @@
 
 // game.questPanelOpen, game.visitedBiomes, game.pendingQuestRewards are now game.* (initialized in state.js)
 
-// Quest data structure — persisted in save data
+// Branch definitions preserve legacy IDs while teaching progression without
+// granting materials above the tier being demonstrated.
 const QUEST_DEFS = [
-    {
-        id: 'first-steps',
-        title: 'First Steps',
-        description: 'Place 5 blocks in the world',
-        target: 5,
-        trackEvent: 'place-block',
-        reward: { id: PLANKS, count: 10, name: 'Planks' }
-    },
-    {
-        id: 'sweet-tooth',
-        title: 'Sweet Tooth',
-        description: 'Craft 3 treats',
-        target: 3,
-        trackEvent: 'craft-treat',
-        reward: { id: ITEM_SUGAR, count: 5, name: 'Sugar' }
-    },
-    {
-        id: 'explorer',
-        title: 'Explorer',
-        description: 'Visit 3 different biomes',
-        target: 3,
-        trackEvent: 'visit-biome',
-        reward: { id: ITEM_IRON_INGOT, count: 5, name: 'Iron Ingots' }
-    },
-    {
-        id: 'animal-friend',
-        title: 'Animal Friend',
-        description: 'Tame any animal',
-        target: 1,
-        trackEvent: 'tame-animal',
-        reward: { id: ITEM_CUPCAKE, count: 5, name: 'Cupcakes' }
-    },
-    {
-        id: 'mythical-companion',
-        title: 'Mythical Companion',
-        description: 'Tame a unicorn',
-        target: 1,
-        trackEvent: 'tame-unicorn',
-        reward: { id: ITEM_DIAMOND_GEM, count: 5, name: 'Diamonds' }
-    },
-    {
-        id: 'master-builder',
-        title: 'Master Builder',
-        description: 'Place 50 blocks',
-        target: 50,
-        trackEvent: 'place-block',
-        reward: { id: GLASS, count: 20, name: 'Glass' }
-    },
-    {
-        id: 'candy-chef',
-        title: 'Candy Chef',
-        description: 'Craft one of each treat type',
-        target: 4,
-        trackEvent: 'craft-treat-type',
-        reward: { id: SPRINKLE, count: 20, name: 'Sprinkles' }
-    },
-    {
-        id: 'trader',
-        title: 'Trader',
-        description: 'Complete 3 villager trades',
-        target: 3,
-        trackEvent: 'complete-trade',
-        reward: { id: ITEM_GOLD_INGOT, count: 5, name: 'Gold Ingots' }
-    },
-    {
-        id: 'deep-discovery',
-        title: 'Deep Discovery',
-        description: 'Visit the Deep Dark biome',
-        target: 1,
-        trackEvent: 'visit-deep-dark',
-        reward: { id: REDSTONE_ORE, count: 10, name: 'Redstone' }
-    },
-    {
-        id: 'creative-spirit',
-        title: 'Creative Spirit',
-        description: 'Toggle Creative Mode',
-        target: 1,
-        trackEvent: 'toggle-creative',
-        reward: null // sparkle effect reward
-    }
+ {id:'first-steps',branch:'Survival',title:'First Steps',description:'Gather 3 candy logs',target:3,event:'blockBroken',filter:WOOD,reward:{id:PLANKS,count:6,name:'Planks'}},
+ {id:'workbench',branch:'Survival',title:'A Place to Make',description:'Craft a workbench',target:1,event:'itemCrafted',filter:CRAFTING_TABLE,deps:['first-steps'],reward:{id:ITEM_STICK,count:4,name:'Sticks'}},
+ {id:'tool-time',branch:'Survival',title:'Tool Time',description:'Craft a wooden tool',target:1,event:'itemCrafted',filter:ITEM_WOOD_PICKAXE,deps:['workbench'],reward:{id:ITEM_COOKIE,count:2,name:'Cookies'}},
+ {id:'first-shelter',branch:'Survival',title:'First Shelter',description:'Place 12 blocks',target:12,event:'blockPlaced',deps:['tool-time'],reward:{id:LOLLIPOP_LAMP,count:2,name:'Lollipop Lamps'}},
+ {id:'oven-ready',branch:'Survival',title:'Warm Oven',description:'Smelt your first ingredient',target:1,event:'ovenSmelted',deps:['first-shelter'],reward:{id:ITEM_SUGAR,count:3,name:'Sugar'}},
+ {id:'sleep-tight',branch:'Survival',title:'Sleep Tight',description:'Sleep in a marshmallow bed',target:1,event:'playerSlept',deps:['first-shelter'],reward:{id:LOLLIPOP_LAMP,count:2,name:'Lollipop Lamps'}},
+ {id:'deep-discovery',branch:'Survival',title:'Deep Discovery',description:'Reach the underground Deep Dark',target:1,event:'deepDarkVisited',deps:['oven-ready'],reward:{id:ITEM_IRON_INGOT,count:2,name:'Iron Ingots'}},
+ {id:'explorer',branch:'Explorer',title:'Flavor Tour',description:'Visit 3 different biomes',target:3,event:'biomeVisited',unique:'biome',reward:{id:ITEM_COOKIE,count:4,name:'Cookies'}},
+ {id:'structure-scout',branch:'Explorer',title:'Sweet Landmark',description:'Discover a generated structure',target:1,event:'structureDiscovered',deps:['explorer'],reward:{id:ITEM_LAPIS_GEM,count:2,name:'Lapis Gems'}},
+ {id:'treasure-hunter',branch:'Explorer',title:'Contained Treasure',description:'Open a structure treasure chest',target:1,event:'structureLootOpened',deps:['structure-scout'],reward:{id:ITEM_GOLD_INGOT,count:1,name:'Gold Ingot'}},
+ {id:'first-builder',branch:'Builder',title:'Builder Basics',description:'Place 5 blocks',target:5,event:'blockPlaced',reward:{id:GLASS,count:6,name:'Glass'}},
+ {id:'master-builder',branch:'Builder',title:'Cozy Base',description:'Place 50 blocks',target:50,event:'blockPlaced',deps:['first-builder'],reward:{id:CANDY_SIGN,count:2,name:'Candy Signs'}},
+ {id:'storage-smart',branch:'Builder',title:'Storage Smart',description:'Open a cupcake chest',target:1,event:'chestOpened',deps:['first-builder'],reward:{id:CUPCAKE_CHEST,count:1,name:'Cupcake Chest'}},
+ {id:'sweet-tooth',branch:'Chef',title:'Sweet Tooth',description:'Craft 3 treats',target:3,event:'treatCrafted',reward:{id:ITEM_SUGAR,count:5,name:'Sugar'}},
+ {id:'candy-chef',branch:'Chef',title:'Candy Chef',description:'Craft four different treats',target:4,event:'treatCrafted',unique:'itemId',deps:['sweet-tooth'],reward:{id:SPRINKLE,count:12,name:'Sprinkles'}},
+ {id:'farm-start',branch:'Chef',title:'Renewable Sweets',description:'Plant 3 crops',target:3,event:'cropPlanted',deps:['sweet-tooth'],reward:{id:ITEM_COOKIE_SEEDS,count:4,name:'Cookie-Wheat Seeds'}},
+ {id:'farm-harvest',branch:'Chef',title:'Home Harvest',description:'Harvest 3 mature crops',target:3,event:'cropHarvested',deps:['farm-start'],reward:{id:ITEM_FLOUR,count:4,name:'Flour'}},
+ {id:'mechanic-start',branch:'Mechanic',title:'Sugar Switch',description:'Place a sugar switch',target:1,event:'blockPlaced',filter:SUGAR_SWITCH,reward:{id:JELLY_WIRE,count:8,name:'Jelly Wire'}},
+ {id:'mechanic-light',branch:'Mechanic',title:'Light It Up',description:'Power a lollipop lamp',target:1,event:'mechanismPowered',filter:LOLLIPOP_LAMP,deps:['mechanic-start'],reward:{id:DELAY_CANDY,count:2,name:'Delay Candy'}},
+ {id:'mechanic-door',branch:'Mechanic',title:'Automatic Welcome',description:'Power a wafer door',target:1,event:'mechanismPowered',filter:WAFER_DOOR,deps:['mechanic-light'],reward:{id:NOTE_CANDY,count:2,name:'Note Candy'}},
+ {id:'animal-friend',branch:'Pet',title:'Animal Friend',description:'Tame any animal',target:1,event:'petTamed',reward:{id:ITEM_CUPCAKE,count:3,name:'Cupcakes'}},
+ {id:'mythical-companion',branch:'Pet',title:'Mythical Companion',description:'Tame a unicorn',target:1,event:'unicornTamed',deps:['animal-friend'],reward:{id:ITEM_GUMMY_BERRIES,count:5,name:'Gummy Berries'}},
+ {id:'family-pen',branch:'Pet',title:'Growing Family',description:'Breed a pair of animals',target:1,event:'animalBred',deps:['animal-friend'],reward:{id:CANDY_FENCE,count:8,name:'Candy Fences'}},
+ {id:'trader',branch:'Explorer',title:'Friendly Trader',description:'Complete 3 villager trades',target:3,event:'tradeCompleted',reward:{id:ITEM_GOLD_INGOT,count:2,name:'Gold Ingots'}},
+ {id:'creative-spirit',branch:'Builder',title:'Creative Spirit',description:'Try Creative mode',target:1,event:'creativeToggled',creative:true,reward:null}
 ];
+const QUEST_BRANCH_ORDER=['Survival','Explorer','Builder','Chef','Mechanic','Pet'];
+QUEST_DEFS.sort((a,b)=>QUEST_BRANCH_ORDER.indexOf(a.branch)-QUEST_BRANCH_ORDER.indexOf(b.branch));
 
 // Runtime quest state — index matches QUEST_DEFS
 const QUESTS = QUEST_DEFS.map(function(def) {
@@ -108,8 +56,7 @@ const QUESTS = QUEST_DEFS.map(function(def) {
         progress: 0,
         completed: false,
         reward: def.reward,
-        trackEvent: def.trackEvent,
-        craftedTreatTypes: [] // only used for candy-chef quest
+        branch:def.branch,deps:def.deps||[],event:def.event,filter:def.filter,unique:[],discovered:!(def.deps&&def.deps.length),craftedTreatTypes:[]
     };
 });
 
@@ -122,86 +69,22 @@ function getQuestById(id) {
 
 // ====== QUEST PROGRESS ENGINE ======
 function advanceQuest(eventType, data) {
+    const aliases={'place-block':'blockPlaced','craft-treat':'treatCrafted','visit-biome':'biomeVisited','visit-deep-dark':'deepDarkVisited','tame-animal':'petTamed','tame-unicorn':'unicornTamed','complete-trade':'tradeCompleted','toggle-creative':'creativeToggled'};
+    eventType=aliases[eventType]||eventType;
+    if(eventType==='treatCrafted'&&typeof data==='number')data={itemId:data};
+    if(eventType==='biomeVisited'&&typeof data==='number')data={value:data,biome:data};
     for (var i = 0; i < QUESTS.length; i++) {
-        var quest = QUESTS[i];
-        if (quest.completed) continue;
-
-        var match = false;
-
-        switch (eventType) {
-            case 'place-block':
-                if (quest.trackEvent === 'place-block') {
-                    quest.progress++;
-                    match = true;
-                }
-                break;
-
-            case 'craft-treat':
-                if (quest.trackEvent === 'craft-treat') {
-                    quest.progress++;
-                    match = true;
-                }
-                // Also check craft-treat-type for candy-chef quest
-                if (quest.trackEvent === 'craft-treat-type' && typeof data === 'number') {
-                    var found = false;
-                    for (var j = 0; j < quest.craftedTreatTypes.length; j++) {
-                        if (quest.craftedTreatTypes[j] === data) { found = true; break; }
-                    }
-                    if (!found) {
-                        quest.craftedTreatTypes.push(data);
-                    }
-                    quest.progress = quest.craftedTreatTypes.length;
-                    match = true;
-                }
-                break;
-
-            case 'visit-biome':
-                if (quest.trackEvent === 'visit-biome') {
-                    quest.progress = data; // data = game.visitedBiomes.length
-                    match = true;
-                }
-                break;
-
-            case 'visit-deep-dark':
-                if (quest.trackEvent === 'visit-deep-dark') {
-                    quest.progress = 1;
-                    match = true;
-                }
-                break;
-
-            case 'tame-animal':
-                if (quest.trackEvent === 'tame-animal') {
-                    quest.progress++;
-                    match = true;
-                }
-                break;
-
-            case 'tame-unicorn':
-                if (quest.trackEvent === 'tame-unicorn') {
-                    quest.progress = 1;
-                    match = true;
-                }
-                break;
-
-            case 'complete-trade':
-                if (quest.trackEvent === 'complete-trade') {
-                    quest.progress++;
-                    match = true;
-                }
-                break;
-
-            case 'toggle-creative':
-                if (quest.trackEvent === 'toggle-creative') {
-                    quest.progress = 1;
-                    match = true;
-                }
-                break;
-        }
-
-        if (match && !quest.completed && quest.progress >= quest.target) {
-            quest.completed = true;
-            grantQuestReward(quest);
-        }
+        var quest = QUESTS[i],def=QUEST_DEFS[i];
+        if(game.worldMode==='creative'&&!def.creative)continue;
+        const unlocked=quest.deps.every(id=>getQuestById(id)?.completed);
+        quest.discovered=quest.discovered||unlocked;
+        if(!unlocked||def.event!==eventType)continue;
+        const filterValue=data&&typeof data==='object'?(data.itemId??data.blockId??data.type):data;
+        if(def.filter!=null&&filterValue!==def.filter)continue;
+        const before=quest.completed,next=CandyCore.advanceQuestState(def,quest,eventType,data,true);
+        quest.progress=next.progress;quest.completed=next.completed;quest.unique=next.unique;quest.craftedTreatTypes=next.unique;
+        CandyEvents.emit('questAdvanced',{questId:quest.id,progress:quest.progress});
+        if(!before&&quest.completed){grantQuestReward(quest);showQuestNotification('Quest complete: '+quest.title+'!');}
     }
     if (typeof scheduleSaveGame === 'function') scheduleSaveGame();
 }
@@ -252,12 +135,14 @@ function trackBiomeVisit(biomeId) {
         if (game.visitedBiomes[i] === biomeId) return; // already visited
     }
     game.visitedBiomes.push(biomeId);
-    advanceQuest('visit-biome', game.visitedBiomes.length);
+    CandyEvents.emit('biomeVisited',{biome:biomeId,value:game.visitedBiomes.length});
 
     if (biomeId === BIOME_DEEP_DARK) {
-        advanceQuest('visit-deep-dark');
+        CandyEvents.emit('deepDarkVisited',{biome:biomeId});
     }
 }
+
+function trackStructureDiscovery(){if(!Array.isArray(game.generatedStructures))return;for(const structure of game.generatedStructures){if(structure.discovered)continue;if((structure.x-game.player.x)**2+(structure.z-game.player.z)**2<=14**2){structure.discovered=true;CandyEvents.emit('structureDiscovered',{family:structure.family,position:structure});showQuestNotification('Discovered: '+structure.family.replaceAll('-',' ')+'!');}}}
 
 // ====== PENDING REWARD RECOVERY ======
 function tryGrantPendingRewards() {
@@ -302,10 +187,12 @@ function updateQuestPanel() {
     if (!list) return;
     list.innerHTML = '';
 
+    var currentBranch='';
     for (var i = 0; i < QUESTS.length; i++) {
         var quest = QUESTS[i];
+        if(quest.branch!==currentBranch){currentBranch=quest.branch;var heading=document.createElement('h4');heading.className='quest-branch';heading.textContent=currentBranch;list.appendChild(heading);}
         var entry = document.createElement('div');
-        entry.className = 'quest-entry' + (quest.completed ? ' completed' : '');
+        entry.className = 'quest-entry' + (quest.completed ? ' completed' : '') + (!quest.discovered?' locked':'');
 
         // Title
         var title = document.createElement('div');
@@ -316,7 +203,7 @@ function updateQuestPanel() {
         // Description
         var desc = document.createElement('div');
         desc.className = 'quest-description';
-        desc.textContent = quest.description;
+        desc.textContent = game.worldMode==='creative'&&!QUEST_DEFS[i].creative?'Available in Survival or Cozy worlds':quest.discovered?quest.description:'Complete: '+quest.deps.map(id=>getQuestById(id)?.title||id).join(', ');
         entry.appendChild(desc);
 
         // Progress bar
@@ -385,7 +272,8 @@ function getQuestSaveData() {
         data[q.id] = {
             progress: q.progress,
             completed: q.completed,
-            craftedTreatTypes: q.craftedTreatTypes || []
+            craftedTreatTypes: q.craftedTreatTypes || [],
+            unique:q.unique||[],discovered:!!q.discovered
         };
     }
     data._pendingRewards = game.pendingQuestRewards.slice();
@@ -400,6 +288,7 @@ function loadQuestSaveData(data) {
         if (isQuestSaveObject(saved)) {
             q.progress = Number.isFinite(saved.progress) ? Math.max(0, Math.min(q.target, Math.floor(saved.progress))) : 0;
             q.completed = !!saved.completed;
+            q.discovered=!!saved.discovered||q.discovered;
             if (q.progress >= q.target) q.completed = true;
             if (Array.isArray(saved.craftedTreatTypes)) {
                 q.craftedTreatTypes = [];
@@ -409,7 +298,9 @@ function loadQuestSaveData(data) {
                         q.craftedTreatTypes.push(treatId);
                     }
                 }
+                q.unique=q.craftedTreatTypes.slice();
             }
+            if(Array.isArray(saved.unique))q.unique=saved.unique.slice(0,32);
         }
     }
     // Restore pending rewards
@@ -421,6 +312,8 @@ function loadQuestSaveData(data) {
         }
     }
 }
+
+for(const type of ['blockBroken','blockPlaced','itemCrafted','ovenSmelted','playerSlept','biomeVisited','deepDarkVisited','structureDiscovered','structureLootOpened','chestOpened','cropPlanted','cropHarvested','mechanismPowered','petTamed','unicornTamed','animalBred','tradeCompleted','creativeToggled'])CandyEvents.on(type,data=>{advanceQuest(type,data);if(type==='itemCrafted'&&isTreatItem(data?.itemId))advanceQuest('treatCrafted',data);});
 
 // Close button handler
 var questCloseBtn = document.getElementById('quest-close');

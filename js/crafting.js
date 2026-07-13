@@ -58,6 +58,21 @@ const ADVANCED_RECIPES = [
     { result: { id: FROSTING_BROWN, count: 2 }, ingredients: [{ id: ITEM_SUGAR, count: 2 }, { id: DIRT, count: 1 }] },
     { result: { id: SPRINKLE, count: 4 }, ingredients: [{ id: ITEM_SUGAR, count: 1 }, { id: ITEM_LAPIS_GEM, count: 1 }] },
     { result: { id: SUGAR_BLOCK, count: 1 }, ingredients: [{ id: ITEM_SUGAR, count: 4 }] },
+    { result: { id: CUPCAKE_CHEST, count: 1 }, ingredients: [{ id: PLANKS, count: 8 }] },
+    { result: { id: WAFER_DOOR, count: 2 }, ingredients: [{ id: PLANKS, count: 6 }] },
+    { result: { id: CANDY_FENCE, count: 3 }, ingredients: [{ id: PLANKS, count: 4 }, { id: ITEM_STICK, count: 2 }] },
+    { result: { id: WAFER_LADDER, count: 3 }, ingredients: [{ id: ITEM_STICK, count: 7 }] },
+    { result: { id: CANDY_SIGN, count: 2 }, ingredients: [{ id: PLANKS, count: 6 }, { id: ITEM_STICK, count: 1 }] },
+    { result: { id: WAFER_SLAB, count: 6 }, ingredients: [{ id: PLANKS, count: 3 }] },
+    { result: { id: WAFER_STAIRS, count: 4 }, ingredients: [{ id: PLANKS, count: 6 }] },
+    { result: { id: MARSHMALLOW_BED, count: 1 }, ingredients: [{ id: FROSTING_WHITE, count: 3 }, { id: PLANKS, count: 3 }] },
+    { result: { id: LOLLIPOP_LAMP, count: 1 }, ingredients: [{ id: ITEM_SUGAR, count: 2 }, { id: GLASS, count: 1 }, { id: REDSTONE_ORE, count: 1 }] },
+    { result: { id: ITEM_WAFER_HOE, count: 1 }, ingredients: [{ id: PLANKS, count: 2 }, { id: ITEM_STICK, count: 2 }] },
+    { result: { id: JELLY_WIRE, count: 8 }, ingredients: [{ id: ITEM_SUGAR, count: 2 }, { id: REDSTONE_ORE, count: 1 }] },
+    { result: { id: SUGAR_SWITCH, count: 1 }, ingredients: [{ id: ITEM_SUGAR, count: 1 }, { id: ITEM_STICK, count: 1 }] },
+    { result: { id: FROSTING_PLATE, count: 2 }, ingredients: [{ id: FROSTING_WHITE, count: 2 }] },
+    { result: { id: DELAY_CANDY, count: 1 }, ingredients: [{ id: JELLY_WIRE, count: 2 }, { id: ITEM_SUGAR, count: 1 }] },
+    { result: { id: NOTE_CANDY, count: 1 }, ingredients: [{ id: PLANKS, count: 4 }, { id: ITEM_SUGAR, count: 1 }] },
 ];
 
 const SMELTING_RECIPES = [
@@ -70,14 +85,55 @@ const SMELTING_RECIPES = [
     { result: { id: GLASS, count: 1 }, ingredients: [{ id: SAND, count: 4 }] },
 ];
 
+function expandIngredientPattern(recipe, width) {
+    const cells=[];
+    for(const ingredient of recipe.ingredients) for(let i=0;i<ingredient.count;i++) cells.push(ingredient.id);
+    const rows=[];for(let i=0;i<cells.length;i+=width) rows.push(cells.slice(i,i+width));
+    return rows;
+}
+
+function configureRecipePatterns() {
+    const basicPatterns=new Map([
+        [PLANKS,[[WOOD]]],[ITEM_STICK,[[PLANKS],[PLANKS]]],[CRAFTING_TABLE,[[PLANKS,PLANKS],[PLANKS,PLANKS]]],
+        [ITEM_SUGAR,[[CANDY_CANE]]],[ITEM_FLOUR,[[SAND,ITEM_SUGAR]]],[FROSTING_WHITE,[[ITEM_SUGAR,ITEM_SUGAR]]]
+    ]);
+    for(const recipe of BASIC_RECIPES) recipe.pattern=basicPatterns.get(recipe.result.id)||expandIngredientPattern(recipe,2);
+    for(const recipe of ADVANCED_RECIPES) {
+        const result=recipe.result.id;
+        if(isToolItem(result)) {
+            const material=recipe.ingredients.find(ingredient=>ingredient.id!==ITEM_STICK)?.id;
+            const kind=(result-ITEM_WOOD_PICKAXE)%4;
+            if(kind===0) recipe.pattern=[[material,material,material],[null,ITEM_STICK,null],[null,ITEM_STICK,null]];
+            else if(kind===1){recipe.pattern=[[material,material],[material,ITEM_STICK],[null,ITEM_STICK]];recipe.allowMirror=true;}
+            else if(kind===2) recipe.pattern=[[material],[ITEM_STICK],[ITEM_STICK]];
+            else recipe.pattern=[[material],[material],[ITEM_STICK]];
+        } else recipe.pattern=expandIngredientPattern(recipe,3);
+    }
+    const byResult=id=>ADVANCED_RECIPES.find(recipe=>recipe.result.id===id);
+    byResult(CUPCAKE_CHEST).pattern=[[PLANKS,PLANKS,PLANKS],[PLANKS,null,PLANKS],[PLANKS,PLANKS,PLANKS]];
+    byResult(WAFER_DOOR).pattern=[[PLANKS,PLANKS],[PLANKS,PLANKS],[PLANKS,PLANKS]];
+    byResult(CANDY_FENCE).pattern=[[PLANKS,ITEM_STICK,PLANKS],[PLANKS,ITEM_STICK,PLANKS]];
+    byResult(WAFER_LADDER).pattern=[[ITEM_STICK,null,ITEM_STICK],[ITEM_STICK,ITEM_STICK,ITEM_STICK],[ITEM_STICK,null,ITEM_STICK]];
+    byResult(CANDY_SIGN).pattern=[[PLANKS,PLANKS,PLANKS],[PLANKS,PLANKS,PLANKS],[null,ITEM_STICK,null]];
+    byResult(WAFER_SLAB).pattern=[[PLANKS,PLANKS,PLANKS]];
+    byResult(WAFER_STAIRS).pattern=[[PLANKS,null,null],[PLANKS,PLANKS,null],[PLANKS,PLANKS,PLANKS]];byResult(WAFER_STAIRS).allowMirror=true;
+    byResult(MARSHMALLOW_BED).pattern=[[FROSTING_WHITE,FROSTING_WHITE,FROSTING_WHITE],[PLANKS,PLANKS,PLANKS]];
+    byResult(ITEM_WAFER_HOE).pattern=[[PLANKS,PLANKS],[null,ITEM_STICK],[null,ITEM_STICK]];byResult(ITEM_WAFER_HOE).allowMirror=true;
+    const oven=BASIC_RECIPES.find(recipe=>recipe.result.id===FURNACE);
+    oven.pattern=[[STONE,STONE,STONE],[STONE,null,STONE],[STONE,STONE,STONE]];
+}
+configureRecipePatterns();
+const BASIC_GRID_RECIPES=BASIC_RECIPES.filter(recipe=>recipe.result.id!==FURNACE);
+const TABLE_GRID_RECIPES=ADVANCED_RECIPES.concat(BASIC_RECIPES.filter(recipe=>recipe.result.id===FURNACE));
+
 // Combined list for backward compatibility (used by countItem, removeItem, etc.)
 const RECIPES = BASIC_RECIPES.concat(ADVANCED_RECIPES).concat(SMELTING_RECIPES);
 
 let craftedFeedbackTimer = null;
 
 const RECIPE_CATEGORY_META = {
-    crafting: { recipes: BASIC_RECIPES, label: 'Inventory', readyText: 'Ready to craft from your inventory.' },
-    table: { recipes: ADVANCED_RECIPES, label: 'Crafting Table', readyText: 'Ready at a Crafting Table.' },
+    crafting: { recipes: BASIC_GRID_RECIPES, label: 'Inventory', readyText: 'Ready in the 2×2 grid.' },
+    table: { recipes: TABLE_GRID_RECIPES, label: 'Crafting Table', readyText: 'Ready in the 3×3 grid.' },
     furnace: { recipes: SMELTING_RECIPES, label: 'Furnace', readyText: 'Ready at a Furnace.' }
 };
 
@@ -209,13 +265,81 @@ function doCraft(recipe) {
         removeItem(ing.id, ing.count);
     }
     addItem(recipe.result.id, recipe.result.count);
+    CandyEvents.emit('itemCrafted', { itemId:recipe.result.id, count:recipe.result.count });
     // Quest hook: treat crafting
     if (typeof isTreatItem === 'function' && isTreatItem(recipe.result.id)) {
         if (typeof advanceQuest === 'function') {
-            advanceQuest('craft-treat', recipe.result.id);
         }
     }
     return true;
+}
+
+function getCraftGridConfig(category) {
+    if(category==='crafting') return {grid:game.playerCraftGrid,size:2,recipes:BASIC_GRID_RECIPES,gridId:'player-craft-grid',outputId:'player-craft-output'};
+    return {grid:game.tableCraftGrid,size:3,recipes:TABLE_GRID_RECIPES,gridId:'table-craft-grid',outputId:'table-craft-output'};
+}
+
+function craftGridMatrix(grid,size) {
+    const matrix=[];
+    for(let y=0;y<size;y++){const row=[];for(let x=0;x<size;x++)row.push(grid[y*size+x]?.id||null);matrix.push(row);}
+    return matrix;
+}
+
+function getMatchingGridRecipe(category) {
+    const config=getCraftGridConfig(category),matrix=craftGridMatrix(config.grid,config.size);
+    for(const recipe of config.recipes) {
+        const match=CandyCore.matchShapedRecipe(matrix,recipe);
+        if(match.matched)return {recipe,match};
+    }
+    return null;
+}
+
+function handleCraftGridSlot(category,index) {
+    const config=getCraftGridConfig(category),slot=config.grid[index];
+    if(!game.cursorStack&&slot){game.cursorStack=slot;config.grid[index]=null;}
+    else if(game.cursorStack&&!slot){config.grid[index]=game.cursorStack;game.cursorStack=null;}
+    else if(game.cursorStack&&slot&&slot.id===game.cursorStack.id){const space=64-slot.count,move=Math.min(space,game.cursorStack.count);slot.count+=move;game.cursorStack.count-=move;if(game.cursorStack.count<=0)game.cursorStack=null;}
+    else if(game.cursorStack&&slot){config.grid[index]=game.cursorStack;game.cursorStack=slot;}
+    renderCraftGrid(category);updateCursorStackUI();scheduleSaveGame();
+}
+
+function consumeMatchedGrid(config) {
+    for(let i=0;i<config.grid.length;i++)if(config.grid[i]){config.grid[i].count--;if(config.grid[i].count<=0)config.grid[i]=null;}
+}
+
+function craftFromGrid(category,shiftCraft) {
+    const config=getCraftGridConfig(category);let crafted=0;
+    do {
+        const match=getMatchingGridRecipe(category);if(!match||!canAddItem(match.recipe.result.id,match.recipe.result.count))break;
+        consumeMatchedGrid(config);addItem(match.recipe.result.id,match.recipe.result.count);CandyEvents.emit('itemCrafted',{itemId:match.recipe.result.id,count:match.recipe.result.count});crafted++;
+    } while(shiftCraft&&crafted<64);
+    if(crafted){updateInventoryUI();updateHotbar();scheduleSaveGame();if(category==='crafting')updateCraftingUI();else updateCraftingTableUI();}
+    else renderCraftGrid(category);return crafted>0;
+}
+
+function returnCraftGrid(category) {
+    const config=getCraftGridConfig(category);
+    for(let i=0;i<config.grid.length;i++){const slot=config.grid[i];if(!slot)continue;if(!addItem(slot.id,slot.count))spawnItemDrop(slot.id,slot.count,game.player.x,game.player.y+1,game.player.z);config.grid[i]=null;}
+    renderCraftGrid(category);
+}
+
+function autofillRecipe(category,recipe) {
+    const config=getCraftGridConfig(category);if(config.grid.some(Boolean))return false;
+    const pattern=CandyCore.trimPattern(recipe.pattern),removals=[];
+    for(const row of pattern)for(const id of row)if(id){const entry=removals.find(item=>item.id===id);if(entry)entry.count++;else removals.push({id,count:1});}
+    const transaction=CandyCore.transactInventory(game.inventory,{remove:removals},getItemMaxStack);if(!transaction.ok)return false;
+    game.inventory=transaction.slots;
+    for(let y=0;y<pattern.length;y++)for(let x=0;x<pattern[y].length;x++){const id=pattern[y][x];if(id)config.grid[y*config.size+x]={id,count:1};}
+    updateInventoryUI();updateHotbar();renderCraftGrid(category);scheduleSaveGame();return true;
+}
+
+function renderCraftGrid(category) {
+    const config=getCraftGridConfig(category),container=document.getElementById(config.gridId),output=document.getElementById(config.outputId);if(!container||!output)return;
+    container.innerHTML='';
+    for(let i=0;i<config.grid.length;i++){const button=document.createElement('button');button.type='button';button.className='craft-grid-slot';button.setAttribute('aria-label','Crafting slot '+(i+1));const slot=config.grid[i];if(slot){const icon=document.createElement('div');icon.className='slot-icon';setItemIcon(icon,slot.id);button.appendChild(icon);if(slot.count>1){const count=document.createElement('span');count.className='slot-count';count.textContent=slot.count;button.appendChild(count);}}button.addEventListener('click',()=>handleCraftGridSlot(category,i));container.appendChild(button);}
+    output.innerHTML='';output.classList.remove('ready');const match=getMatchingGridRecipe(category);
+    if(match){const icon=document.createElement('div');icon.className='slot-icon';setItemIcon(icon,match.recipe.result.id);output.appendChild(icon);if(match.recipe.result.count>1){const count=document.createElement('span');count.className='slot-count';count.textContent=match.recipe.result.count;output.appendChild(count);}output.classList.add('ready');output.disabled=false;output.title=BLOCK_NAMES[match.recipe.result.id]||'Crafted item';}else output.disabled=true;
+    output.onclick=event=>craftFromGrid(category,event.shiftKey);
 }
 
 function updateCraftingUI() {
@@ -223,7 +347,8 @@ function updateCraftingUI() {
     if (!list) return;
     list.innerHTML = '';
     // Only show basic recipes in the inventory crafting panel
-    _renderRecipeList(list, BASIC_RECIPES, 'crafting');
+    renderCraftGrid('crafting');
+    _renderRecipeList(list, BASIC_GRID_RECIPES, 'crafting');
     updateRecipeGuideUI();
 }
 
@@ -232,7 +357,8 @@ function updateCraftingTableUI() {
     const list = document.getElementById('crafting-table-list');
     if (!list) return;
     list.innerHTML = '';
-    _renderRecipeList(list, ADVANCED_RECIPES, 'table');
+    renderCraftGrid('table');
+    _renderRecipeList(list, TABLE_GRID_RECIPES, 'table');
     updateRecipeGuideUI();
 }
 
@@ -241,6 +367,7 @@ function updateFurnaceUI() {
     const list = document.getElementById('furnace-list');
     if (!list) return;
     list.innerHTML = '';
+    renderOvenUI();
     _renderRecipeList(list, SMELTING_RECIPES, 'furnace');
     updateRecipeGuideUI();
 }
@@ -364,7 +491,7 @@ function _renderRecipeList(container, recipes, category) {
 
         const status = document.createElement(craftable ? 'button' : 'span');
         status.className = 'craft-status ' + (recentlyCrafted ? 'crafted' : (craftable ? 'craft-action' : 'missing'));
-        status.textContent = recentlyCrafted ? 'Crafted!' : (category === 'furnace' ? (craftable ? 'Smelt' : 'Missing') : (craftable ? 'Craft' : 'Missing'));
+        status.textContent = recentlyCrafted ? 'Crafted!' : (category === 'furnace' ? (craftable ? 'Load oven' : 'Missing') : (craftable ? 'Fill grid' : 'Missing'));
         if (craftable) {
             status.type = 'button';
             status.setAttribute('aria-label', (category === 'furnace' ? 'Smelt ' : 'Craft ') + resultName);
@@ -387,6 +514,12 @@ function _renderRecipeList(container, recipes, category) {
 
         if (craftable) {
             const craftRecipe = () => {
+                if(category==='crafting'||category==='table') {
+                    autofillRecipe(category,recipe);
+                    if(category==='crafting')updateCraftingUI();else updateCraftingTableUI();
+                    return;
+                }
+                if(category==='furnace'){autofillOvenRecipe(recipe);updateFurnaceUI();return;}
                 if (!doCraft(recipe)) return;
                 _recentlyCrafted = { category: category, recipeIndex: ri };
                 clearTimeout(craftedFeedbackTimer);

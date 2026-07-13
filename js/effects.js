@@ -8,6 +8,10 @@ function lerp(a, b, t) { return a + (b - a) * t; }
 function updateDayNight(dt) {
     game.dayTime = (game.dayTime + dt) % DAY_CYCLE_LENGTH;
     const t = game.dayTime / DAY_CYCLE_LENGTH;
+    const sunAngle = (t - 0.25) * Math.PI * 2;
+    game.sunDirection[0] = Math.cos(sunAngle) * 0.35;
+    game.sunDirection[1] = Math.sin(sunAngle);
+    game.sunDirection[2] = 0.45;
 
     // Daylight intensity
     if (t < 0.2) { game.daylight = 0.35 + (t / 0.2) * 0.65; }
@@ -39,6 +43,58 @@ function updateDayNight(dt) {
         game.skyR = lerp(sc[3][0], sc[0][0], f); game.skyG = lerp(sc[3][1], sc[0][1], f); game.skyB = lerp(sc[3][2], sc[0][2], f);
     }
     game.gl.clearColor(game.skyR, game.skyG, game.skyB, 1.0);
+}
+
+const WEATHER_TYPES = Object.freeze({
+    CLEAR: 'clear',
+    SPRINKLES: 'sprinkles',
+    SUGAR_SNOW: 'sugar-snow',
+    SHERBET_MIST: 'sherbet-mist',
+    CANDY_STORM: 'candy-storm'
+});
+
+function selectScheduledWeather(scheduleIndex, biome) {
+    return CandyCore.selectScheduledWeather(scheduleIndex, biome);
+}
+
+function updateWeather(dt) {
+    const biome = getBiome(Math.floor(game.player.x), Math.floor(game.player.z));
+    const scheduleIndex = Math.floor((game.dayTime + 17) / 75);
+    if(!game.weather.auditForced && scheduleIndex !== game.weather.scheduleIndex) {
+        game.weather.scheduleIndex = scheduleIndex;
+        game.weather.type = selectScheduledWeather(scheduleIndex, biome);
+        if(typeof scheduleSaveGame === 'function') scheduleSaveGame();
+    }
+    const target = game.weather.type === WEATHER_TYPES.CLEAR ? 0 : 1;
+    game.weather.intensity += (target - game.weather.intensity) * Math.min(1, dt * 0.7);
+
+    game.fogR = game.skyR; game.fogG = game.skyG; game.fogB = game.skyB;
+    if(game.weather.type === WEATHER_TYPES.SHERBET_MIST) {
+        game.fogR = lerp(game.fogR, 0.93, game.weather.intensity * 0.45);
+        game.fogG = lerp(game.fogG, 0.68, game.weather.intensity * 0.45);
+        game.fogB = lerp(game.fogB, 0.78, game.weather.intensity * 0.45);
+    } else if(game.weather.type === WEATHER_TYPES.CANDY_STORM) {
+        game.fogR *= 1 - game.weather.intensity * 0.28;
+        game.fogG *= 1 - game.weather.intensity * 0.38;
+        game.fogB *= 1 - game.weather.intensity * 0.24;
+    } else if(game.weather.type === WEATHER_TYPES.SUGAR_SNOW) {
+        game.fogR = lerp(game.fogR, 0.92, game.weather.intensity * 0.28);
+        game.fogG = lerp(game.fogG, 0.9, game.weather.intensity * 0.28);
+        game.fogB = lerp(game.fogB, 0.96, game.weather.intensity * 0.28);
+    }
+
+    const particleRate = 24 * game.settings.particleIntensity * game.weather.intensity;
+    game.weather.particleCarry = (game.weather.particleCarry || 0) + particleRate * dt;
+    while(game.weather.particleCarry >= 1 && game.particles.length < MAX_PARTICLES) {
+        game.weather.particleCarry--;
+        const index = Math.floor(game.gameTime * 60 + game.weather.particleCarry * 17);
+        const px = game.player.x + (hash2D(index, 91) - 0.5) * 22;
+        const pz = game.player.z + (hash2D(index, 137) - 0.5) * 22;
+        const snow = game.weather.type === WEATHER_TYPES.SUGAR_SNOW;
+        const color = snow ? [1,0.97,1,0.9] : [1,0.35,0.68,0.85];
+        spawnParticle(px, game.player.y + 9 + hash2D(index, 211) * 5, pz,
+            snow ? 0.15 : -0.4, snow ? -1.4 : -6, snow ? 0.1 : 0.25, color, snow ? 5 : 2.2);
+    }
 }
 
 // ====== EFFECTS SYSTEM (Wave 3) ======
@@ -88,6 +144,25 @@ function setPlayerHealth(value) {
     return true;
 }
 
+function damagePlayer(amount,source) {
+    if(game.difficulty==='peaceful'||game.combat.invulnerableTime>0||game.combat.dead)return false;
+    game.combat.invulnerableTime=.8;
+    const next=game.playerHealth-Math.max(0,amount);
+    if(game.worldMode==='cozy'&&next<=0){setPlayerHealth(1);showSurvivalNotice('That was close! Cozy mode kept you safe.');}
+    else {setPlayerHealth(next);if(next<=0)killPlayer(source);}
+    CandyEvents.emit('playerDamaged',{amount,source,position:game.player});return true;
+}
+
+function killPlayer(source) {
+    if(game.combat.dead)return;game.combat.dead=true;game.paused=true;clearInputState();document.exitPointerLock?.();
+    if(game.worldMode==='survival')for(let i=0;i<game.inventory.length;i++){const slot=game.inventory[i];if(slot){spawnItemDrop(slot.id,slot.count,game.player.x,game.player.y+1,game.player.z,{x:(hash2D(i,1)-.5)*3,y:2,z:(hash2D(i,2)-.5)*3});game.inventory[i]=null;}}
+    updateHotbar();setMetaVisible('respawn-overlay',true);document.getElementById('respawn-button').focus();
+}
+
+function respawnPlayer() {
+    const p=game.spawnPoint;game.player.x=p.x;game.player.y=p.y;game.player.z=p.z;game.player.vy=0;game.playerHealth=20;game.playerHunger=Math.max(10,game.playerHunger);game.combat.dead=false;game.combat.invulnerableTime=2;updateHearts();updateHunger();setMetaVisible('respawn-overlay',false);game.paused=false;requestGamePointerLock();scheduleSaveGame();
+}
+
 function setPlayerHunger(value) {
     const previous = game.playerHunger;
     const next = clampPlayerMeter(value);
@@ -119,8 +194,8 @@ function isSurvivalMeterActive() {
 }
 
 function isGameplayInputBlocked() {
-    return game.inventoryOpen || game.tradeTarget || game.petPanelOpen || game.questPanelOpen ||
-        game.craftingTableOpen || game.furnaceOpen || game.controlsOverlayOpen;
+    return game.paused || game.inventoryOpen || game.tradeTarget || game.petPanelOpen || game.questPanelOpen ||
+        game.craftingTableOpen || game.furnaceOpen || game.chestOpen || game.controlsOverlayOpen;
 }
 
 function consumePlayerHunger(amount) {
@@ -152,6 +227,8 @@ function updateSurvival(dt) {
     if (!game.worldLoaded) return;
 
     game.survival.noticeCooldown = Math.max(0, game.survival.noticeCooldown - dt);
+    game.combat.attackCooldown=Math.max(0,game.combat.attackCooldown-dt);
+    game.combat.invulnerableTime=Math.max(0,game.combat.invulnerableTime-dt);
 
     if (!isSurvivalMeterActive()) {
         game.survival.regenTimer = 0;
@@ -160,6 +237,9 @@ function updateSurvival(dt) {
     }
 
     if (isGameplayInputBlocked()) return;
+    const headBlock=getBlock(Math.floor(game.player.x),Math.floor(game.player.y+1.62),Math.floor(game.player.z));
+    game.survival.drownTimer=headBlock===WATER?game.survival.drownTimer+dt:Math.max(0,game.survival.drownTimer-dt*3);
+    if(game.survival.drownTimer>8){game.survival.drownTimer=6;damagePlayer(2,{type:'drowning'});}
 
     const moving = game.keys['KeyW'] || game.keys['ArrowUp'] ||
         game.keys['KeyS'] || game.keys['ArrowDown'] ||
@@ -208,6 +288,34 @@ function spawnParticle(x, y, z, vx, vy, vz, color, life) {
     game.particles.push({x, y, z, vx, vy, vz, color, life, maxLife: life});
 }
 
+function blockColorToParticle(blockId) {
+    const hex = BLOCK_COLORS[blockId] || '#FF69B4';
+    const value = parseInt(hex.slice(1), 16);
+    return [((value>>16)&255)/255,((value>>8)&255)/255,(value&255)/255,1];
+}
+
+function spawnBlockFeedback(target, blockId, amount) {
+    if(!target) return;
+    const color = blockColorToParticle(blockId);
+    const count = Math.max(1, Math.min(8, amount || 3));
+    for(let i=0;i<count;i++) {
+        const seed=target.x*97+target.y*193+target.z*389+i*53+game.breakStage*17;
+        const ja=hash2D(seed,11)-.5,jb=hash2D(seed,29)-.5;
+        const x=target.x+.5+target.nx*.51+(target.nx?0:ja*.7);
+        const y=target.y+.5+target.ny*.51+(target.ny?0:jb*.7);
+        const z=target.z+.5+target.nz*.51+(target.nz?0:ja*.7);
+        spawnParticle(x,y,z,target.nx*1.1+ja,Math.max(.5,target.ny*1.1+hash2D(seed,47)*1.7),target.nz*1.1+jb,color,.45+hash2D(seed,71)*.4);
+    }
+}
+
+function spawnPlacementFeedback(x,y,z,blockId) {
+    const color=blockColorToParticle(blockId);
+    for(let i=0;i<6;i++) {
+        const angle=i*Math.PI/3;
+        spawnParticle(x+.5,y+.15,z+.5,Math.cos(angle)*.75,.6+hash2D(i+x,y+z),Math.sin(angle)*.75,color,.55);
+    }
+}
+
 function updateParticles(dt) {
     for (let i = game.particles.length - 1; i >= 0; i--) {
         const p = game.particles[i];
@@ -220,6 +328,7 @@ function updateParticles(dt) {
 
 function updateEffects(dt) {
     updateSurvival(dt);
+    updateWeather(dt);
 
     for (let i = game.activeEffects.length - 1; i >= 0; i--) {
         game.activeEffects[i].timeRemaining -= dt;
@@ -252,22 +361,8 @@ function updateEffects(dt) {
 
 function renderParticles(vp) {
     if (game.particles.length === 0) return;
-    const buf = particleVertBuffer;
-    let off = 0;
-    for (const p of game.particles) {
-        const dx = p.x - game.player.x, dz = p.z - game.player.z;
-        if (dx*dx + dz*dz > 50*50) continue;
-        const s = 0.05 * (p.life / p.maxLife);
-        buf[off++] = p.x - s; buf[off++] = p.y;     buf[off++] = p.z;
-        buf[off++] = p.x + s; buf[off++] = p.y;     buf[off++] = p.z;
-        buf[off++] = p.x;     buf[off++] = p.y - s; buf[off++] = p.z;
-        buf[off++] = p.x;     buf[off++] = p.y + s; buf[off++] = p.z;
-    }
-    if (off === 0) return;
-
     game.gl.useProgram(game.lineProgram);
     game.gl.uniformMatrix4fv(lUni.uVP, false, vp);
-    game.gl.uniform4f(lUni.uColor, 1.0, 0.41, 0.71, 0.8);
 
     if (!particleVAO) {
         particleVAO = game.gl.createVertexArray();
@@ -279,13 +374,36 @@ function renderParticles(vp) {
     }
 
     game.gl.bindVertexArray(particleVAO);
-    game.gl.bindBuffer(game.gl.ARRAY_BUFFER, particleVBO);
-    game.gl.bufferData(game.gl.ARRAY_BUFFER, buf.subarray(0, off), game.gl.DYNAMIC_DRAW);
     game.gl.enable(game.gl.BLEND);
     game.gl.blendFunc(game.gl.SRC_ALPHA, game.gl.ONE_MINUS_SRC_ALPHA);
-    game.gl.disable(game.gl.DEPTH_TEST);
-    game.gl.drawArrays(game.gl.LINES, 0, off / 3);
-    game.gl.enable(game.gl.DEPTH_TEST);
+    game.gl.depthMask(false);
+    const palette=[[1,.41,.71,1],[1,.97,1,1],[.72,.42,.25,1],[.9,.84,.88,1],[.25,.08,.16,1],[1,.2,.35,1]];
+    for(let paletteIndex=0;paletteIndex<palette.length;paletteIndex++) {
+        const color=palette[paletteIndex];
+        let off=0;
+        for(const p of game.particles) {
+            const dx=p.x-game.player.x,dz=p.z-game.player.z;
+            if(dx*dx+dz*dz>2500) continue;
+            let nearestIndex=0,best=Infinity;
+            for(let ci=0;ci<palette.length;ci++) {
+                const candidate=palette[ci];
+                const d=(p.color[0]-candidate[0])**2+(p.color[1]-candidate[1])**2+(p.color[2]-candidate[2])**2;
+                if(d<best){best=d;nearestIndex=ci;}
+            }
+            if(nearestIndex!==paletteIndex) continue;
+            const s=.05*(p.life/p.maxLife);
+            particleVertBuffer[off++]=p.x-s; particleVertBuffer[off++]=p.y; particleVertBuffer[off++]=p.z;
+            particleVertBuffer[off++]=p.x+s; particleVertBuffer[off++]=p.y; particleVertBuffer[off++]=p.z;
+            particleVertBuffer[off++]=p.x; particleVertBuffer[off++]=p.y-s; particleVertBuffer[off++]=p.z;
+            particleVertBuffer[off++]=p.x; particleVertBuffer[off++]=p.y+s; particleVertBuffer[off++]=p.z;
+        }
+        if(!off) continue;
+        game.gl.uniform4f(lUni.uColor,color[0],color[1],color[2],.9);
+        game.gl.bindBuffer(game.gl.ARRAY_BUFFER,particleVBO);
+        game.gl.bufferData(game.gl.ARRAY_BUFFER,particleVertBuffer.subarray(0,off),game.gl.DYNAMIC_DRAW);
+        game.gl.drawArrays(game.gl.LINES,0,off/3);
+    }
+    game.gl.depthMask(true);
     game.gl.disable(game.gl.BLEND);
 }
 

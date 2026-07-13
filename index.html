@@ -5,16 +5,94 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sweet, Sweet World</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/style.css?v=86">
 </head>
 <body>
 <canvas id="game"></canvas>
 
-<div id="loading">
+<div id="title-screen" class="meta-screen">
+  <div class="meta-card title-card">
+    <div class="title-kicker">A cozy voxel adventure</div>
+    <h1>Sweet, Sweet World</h1>
+    <p>Explore, build, bake, and befriend a world made of candy.</p>
+    <button id="continue-world" type="button">Continue Candy World</button>
+    <label for="new-world-mode">New world rules</label>
+    <select id="new-world-mode">
+      <option value="survival">Survival</option>
+      <option value="cozy">Cozy Survival</option>
+      <option value="creative">Creative</option>
+    </select>
+    <label>World slot <select id="world-slot"><option value="slot-1">World 1</option><option value="slot-2">World 2</option><option value="slot-3">World 3</option></select></label>
+    <label>World name <input id="new-world-name" maxlength="32" value="Candy World"></label>
+    <label>Seed <input id="new-world-seed" maxlength="48" value="candy-default"></label>
+    <button id="new-world" type="button">New World</button>
+    <div class="world-slot-actions"><button id="duplicate-world" type="button">Duplicate</button><button id="export-world" type="button">Export JSON</button><button id="import-world" type="button">Import JSON</button><button id="delete-world" type="button">Delete</button><input id="import-world-file" type="file" accept="application/json" hidden></div>
+    <button class="open-settings" type="button">Settings</button>
+    <div id="save-summary" role="status"></div>
+  </div>
+</div>
+
+<div id="audit-controls" hidden><button id="audit-travel" type="button">Audit travel 1,024 blocks</button><button id="audit-return" type="button">Audit return to marker</button><button id="audit-weather" type="button">Audit heavy weather</button><button id="audit-cave" type="button">Audit cave</button><button id="audit-utilities" type="button">Audit utility shapes</button><button id="audit-systems" type="button">Audit gameplay systems</button><button id="audit-density" type="button">Audit 80 mobs + drops</button><button id="audit-corrupt-save" type="button">Audit interrupted save</button><span id="audit-status" role="status"></span></div>
+
+<div id="loading" style="display:none">
   <h1>Sweet, Sweet World</h1>
   <p>Generating candy world...</p>
   <div id="loadbar-outer"><div id="loadbar-inner"></div></div>
-  <div id="load-text">Initializing...</div>
+  <div id="load-text">Initializing...</div><div id="loadtext" hidden></div>
+</div>
+
+<div id="pause-overlay" class="meta-screen" aria-hidden="true">
+  <div class="meta-card" role="dialog" aria-modal="true" aria-labelledby="pause-title">
+    <h2 id="pause-title">Candy World Paused</h2>
+    <button id="resume-game" type="button">Resume</button>
+    <button class="open-settings" type="button">Settings &amp; Accessibility</button>
+    <button id="open-controls" type="button">Controls</button>
+    <div id="pause-save-status" role="status">World changes save automatically.</div>
+    <button id="return-title" type="button">Save &amp; Return to Title</button>
+  </div>
+</div>
+
+<div id="settings-overlay" class="meta-screen" aria-hidden="true">
+  <div class="meta-card settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <h2 id="settings-title">Settings</h2>
+    <label>Render scale <select data-setting="renderScale"><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option></select></label>
+    <label>View distance <select data-setting="viewDistance"><option value="3">Near</option><option value="4">Standard</option><option value="5">Far</option></select></label>
+    <label>Field of view <input data-setting="fov" type="range" min="55" max="95" step="1"></label>
+    <label>Mouse sensitivity <input data-setting="mouseSensitivity" type="range" min="0.0008" max="0.006" step="0.0002"></label>
+    <label>HUD scale <input data-setting="hudScale" type="range" min="0.75" max="2" step="0.05"></label>
+    <label>Master volume <input data-setting="masterVolume" type="range" min="0" max="1" step="0.05"></label>
+    <label>Effects volume <input data-setting="effectsVolume" type="range" min="0" max="1" step="0.05"></label>
+    <label>Ambience volume <input data-setting="ambienceVolume" type="range" min="0" max="1" step="0.05"></label>
+    <label>Weather particles <input data-setting="particleIntensity" type="range" min="0" max="1" step="0.1"></label>
+    <label>Camera effects <input data-setting="cameraShake" type="range" min="0" max="1" step="0.1"></label>
+    <label class="check-setting"><input data-setting="reducedMotion" type="checkbox"> Reduced motion</label>
+    <label class="check-setting"><input data-setting="viewBob" type="checkbox"> Camera bob</label>
+    <label class="check-setting"><input data-setting="flashing" type="checkbox"> Flashing effects</label>
+    <fieldset><legend>Key remapping</legend>
+      <label>Forward <select data-keybind="forward"><option value="KeyW">W</option><option value="ArrowUp">Up arrow</option><option value="KeyI">I</option></select></label>
+      <label>Back <select data-keybind="back"><option value="KeyS">S</option><option value="ArrowDown">Down arrow</option><option value="KeyK">K</option></select></label>
+      <label>Left <select data-keybind="left"><option value="KeyA">A</option><option value="ArrowLeft">Left arrow</option><option value="KeyJ">J</option></select></label>
+      <label>Right <select data-keybind="right"><option value="KeyD">D</option><option value="ArrowRight">Right arrow</option><option value="KeyL">L</option></select></label>
+      <label>Mine <select data-keybind="mine"><option value="KeyR">R</option><option value="KeyM">M</option><option value="KeyX">X</option></select></label>
+      <label>Place <select data-keybind="place"><option value="KeyF">F</option><option value="KeyB">B</option><option value="KeyV">V</option></select></label>
+      <label>Inventory <select data-keybind="inventory"><option value="KeyE">E</option><option value="KeyI">I</option><option value="Tab">Tab</option></select></label>
+      <label>Pets <select data-keybind="pets"><option value="KeyP">P</option><option value="KeyO">O</option><option value="KeyU">U</option></select></label>
+      <label>Quests <select data-keybind="quests"><option value="KeyQ">Q</option><option value="KeyG">G</option><option value="KeyY">Y</option></select></label>
+    </fieldset>
+    <button id="settings-close" type="button">Done</button>
+  </div>
+</div>
+
+<div id="tutorial-card" aria-live="polite" hidden>
+  <strong id="tutorial-title"></strong><span id="tutorial-detail"></span>
+  <button id="tutorial-dismiss" type="button">Dismiss tutorial</button>
+</div>
+<div id="respawn-overlay" class="meta-screen" aria-hidden="true">
+  <div class="meta-card" role="dialog" aria-modal="true" aria-labelledby="respawn-title">
+    <h2 id="respawn-title">A little too sour!</h2>
+    <p>Your dropped pack is waiting where you fell.</p>
+    <button id="respawn-button" type="button">Respawn at the Candy Marker</button>
+  </div>
 </div>
 
 <div id="hud">
@@ -23,32 +101,45 @@
     <div id="action-helper-title">Click to play</div>
     <div id="action-helper-detail">WASD to move. H shows controls.</div>
   </div>
-  <div id="hearts"></div>
-  <div id="hunger"></div>
+  <div id="survival-meters" aria-live="polite">
+    <div id="hearts" role="img" aria-label="Health"></div>
+    <div id="hunger" role="img" aria-label="Hunger"></div>
+  </div>
   <div id="hotbar"></div>
   <div id="effects"></div>
   <div id="debug-info"></div>
   <div id="recipe-guide"></div>
-  <div id="pet-btn" title="Pets (P)">🐾</div>
-  <div id="quest-book-btn" title="Quests (Q)">📖</div>
-  <div id="creative-toggle" title="Toggle Creative Mode (C)">🎮 Survival</div>
+  <button id="pet-btn" type="button" title="Pets (P)" aria-label="Open pets">PETS</button>
+  <button id="quest-book-btn" type="button" title="Quests (Q)" aria-label="Open quest book">QUESTS</button>
+  <button id="creative-toggle" type="button" title="Toggle Creative Mode (C)" aria-label="Toggle Creative Mode">SURVIVAL</button>
   <div id="mode-indicator" class="mode-indicator survival">Survival</div>
   <div id="name-tags"></div>
   <div id="quest-notification"></div>
+  <div id="selected-item-name" role="status" aria-live="polite"></div>
+  <div id="held-item" aria-hidden="true">
+    <div id="held-hand"></div>
+    <div id="held-item-icon"></div>
+  </div>
 </div>
 
 <div id="inventory-overlay">
   <div id="inventory-panel">
     <div id="inv-main">
       <h3>Inventory</h3>
+      <div id="creative-inventory-tools" hidden><label>Search <input id="creative-search" type="search" autocomplete="off"></label><label>Category <select id="creative-category"><option value="all">All</option><option value="blocks">Blocks</option><option value="tools">Tools</option><option value="food">Treats</option><option value="materials">Materials</option></select></label></div>
       <div id="inv-grid"></div>
     </div>
     <div id="crafting-panel">
       <h3>Crafting</h3>
+      <div class="craft-grid-area" aria-label="2 by 2 player crafting grid">
+        <div id="player-craft-grid" class="craft-grid grid-2"></div>
+        <span class="craft-arrow" aria-hidden="true">→</span>
+        <button id="player-craft-output" class="craft-output" type="button" aria-label="Take crafted output"></button>
+      </div>
       <div id="crafting-help" aria-label="Crafting help">
-        <p>Click a recipe to craft.</p>
-        <p>Ingredients can be anywhere in your inventory.</p>
-        <p>Bright recipes are ready. Dim recipes are missing ingredients.</p>
+        <p>Select a recipe to fill its pattern, or arrange the 2×2 grid yourself.</p>
+        <p>Take the output to craft. Shift-click crafts repeatedly while materials fit.</p>
+        <p>Bright recipes can be filled. Dim recipes are missing ingredients.</p>
       </div>
       <div id="crafting-list"></div>
     </div>
@@ -93,8 +184,13 @@
       <button id="crafting-table-close" type="button">Close</button>
     </div>
     <div id="crafting-table-help" aria-label="Crafting table help">
-      <p>Place ingredients on the table to craft advanced items.</p>
-      <p>Tools, treats, and decorative blocks require a Crafting Table.</p>
+      <p>Arrange ingredients in the 3×3 pattern, or select a recipe to autofill it.</p>
+      <p>Tools, treats, and decorative blocks require this larger grid.</p>
+    </div>
+    <div class="craft-grid-area" aria-label="3 by 3 crafting table grid">
+      <div id="table-craft-grid" class="craft-grid grid-3"></div>
+      <span class="craft-arrow" aria-hidden="true">→</span>
+      <button id="table-craft-output" class="craft-output" type="button" aria-label="Take crafted output"></button>
     </div>
     <div id="crafting-table-list"></div>
   </div>
@@ -107,10 +203,24 @@
       <button id="furnace-close" type="button">Close</button>
     </div>
     <div id="furnace-help" aria-label="Furnace help">
-      <p>Smelt ores into ingots and gems.</p>
-      <p>Sand can be smelted into glass.</p>
+      <p>Load an ingredient and candy fuel. The oven continues while you explore.</p>
+      <p>Blocked outputs pause safely; offline progress is capped at five minutes.</p>
+    </div>
+    <div id="oven-slots" class="oven-slots" aria-label="Candy Oven slots">
+      <button id="oven-input" class="oven-slot" type="button" aria-label="Oven input"></button>
+      <div class="oven-progress"><div id="oven-progress-fill"></div><span id="oven-progress-label">Idle</span></div>
+      <button id="oven-fuel" class="oven-slot" type="button" aria-label="Oven fuel"></button>
+      <span class="craft-arrow" aria-hidden="true">→</span>
+      <button id="oven-output" class="oven-slot output" type="button" aria-label="Oven output"></button>
     </div>
     <div id="furnace-list"></div>
+  </div>
+</div>
+
+<div id="chest-overlay">
+  <div id="chest-panel">
+    <div class="station-header"><h3>Cupcake Chest</h3><button id="chest-close" type="button">Close</button></div>
+    <div id="chest-grid" class="storage-grid" role="grid" aria-label="Cupcake Chest storage"></div>
   </div>
 </div>
 
@@ -160,22 +270,36 @@
   </div>
 </div>
 
-<script src="js/math.js?v=4"></script>
-<script src="js/noise.js?v=4"></script>
-<script src="js/blocks.js?v=4"></script>
-<script src="js/items.js?v=4"></script>
-<script src="js/state.js?v=4"></script>
-<script src="js/effects.js?v=4"></script>
-<script src="js/tools.js?v=4"></script>
-<script src="js/crafting.js?v=4"></script>
-<script src="js/quests.js?v=4"></script>
-<script src="js/mobs.js?v=4"></script>
-<script src="js/webgl.js?v=4"></script>
-<script src="js/world.js?v=4"></script>
-<script src="js/persistence.js?v=4"></script>
-<script src="js/player.js?v=4"></script>
-<script src="js/input.js?v=4"></script>
-<script src="js/render.js?v=4"></script>
-<script src="js/main.js?v=4"></script>
+<script src="js/core.js?v=87"></script>
+<script src="js/math.js?v=6"></script>
+<script src="js/noise.js?v=33"></script>
+<script src="js/blocks.js?v=18"></script>
+<script src="js/items.js?v=18"></script>
+<script src="js/state.js?v=86"></script>
+<script src="js/events.js?v=7"></script>
+<script src="js/audio.js?v=84"></script>
+<script src="js/effects.js?v=72"></script>
+<script src="js/tools.js?v=57"></script>
+<script src="js/crafting.js?v=22"></script>
+<script src="js/quests.js?v=84"></script>
+<script src="js/mobs.js?v=81"></script>
+<script src="js/webgl.js?v=18"></script>
+<script src="js/world.js?v=85"></script>
+<script src="js/drops.js?v=12"></script>
+<script src="js/oven.js?v=62"></script>
+<script src="js/utilities.js?v=81"></script>
+<script src="js/farming.js?v=87"></script>
+<script src="js/mechanisms.js?v=84"></script>
+<script src="js/structures.js?v=77"></script>
+<script src="js/chunk-streaming.js?v=85"></script>
+<script src="js/persistence-db.js?v=83"></script>
+<script src="js/persistence.js?v=84"></script>
+<script src="js/player.js?v=86"></script>
+<script src="js/input.js?v=86"></script>
+<script src="js/render.js?v=57"></script>
+<script src="js/ui.js?v=87"></script>
+<script src="js/acceptance-audit.js?v=91"></script>
+<script src="js/world-slots.js?v=91"></script>
+<script src="js/main.js?v=77"></script>
 </body>
 </html>

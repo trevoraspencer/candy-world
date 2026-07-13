@@ -2,19 +2,20 @@
 
 // ====== BLOCK HIGHLIGHT (Line rendering) ======
 let lineVAO, lineVBO;
-const blockHighlightLines = new Float32Array(72);
+const blockHighlightLines = new Float32Array(160);
+let blockHighlightVertexCount = 24;
 {
     lineVAO = game.gl.createVertexArray();
     lineVBO = game.gl.createBuffer();
     game.gl.bindVertexArray(lineVAO);
     game.gl.bindBuffer(game.gl.ARRAY_BUFFER, lineVBO);
-    game.gl.bufferData(game.gl.ARRAY_BUFFER, new Float32Array(72), game.gl.DYNAMIC_DRAW); // 12 lines * 2 * 3
+    game.gl.bufferData(game.gl.ARRAY_BUFFER, blockHighlightLines.byteLength, game.gl.DYNAMIC_DRAW);
     game.gl.enableVertexAttribArray(lAPos);
     game.gl.vertexAttribPointer(lAPos, 3, game.gl.FLOAT, false, 12, 0);
     game.gl.bindVertexArray(null);
 }
 
-function updateBlockHighlight(bx, by, bz) {
+function updateBlockHighlight(bx, by, bz, nx, ny, nz, progress) {
     const e = 0.002; // slight expansion to avoid z-fighting
     const x0 = bx - e, y0 = by - e, z0 = bz - e;
     const x1 = bx + 1 + e, y1 = by + 1 + e, z1 = bz + 1 + e;
@@ -35,9 +36,22 @@ function updateBlockHighlight(bx, by, bz) {
         x1,y0,z1, x1,y1,z1,
         x0,y0,z1, x0,y1,z1
     ];
+    const stage = Math.max(0, Math.min(8, Math.ceil((progress || 0) * 8)));
+    const cracks = [
+        [-.02,.5,.28,.52], [.28,.52,.42,.78], [.28,.52,.48,.31], [.48,.31,.72,.18],
+        [.42,.78,.68,.91], [.48,.31,.78,.43], [.78,.43,1.02,.34], [.42,.78,.54,1.02]
+    ];
+    for(let i=0;i<stage;i++) for(let endpoint=0;endpoint<2;endpoint++) {
+        const a=cracks[i][endpoint*2], b=cracks[i][endpoint*2+1];
+        if(Math.abs(nx)>0) values.push(nx>0?x1:x0,y0+a,z0+b);
+        else if(Math.abs(ny)>0) values.push(x0+a,ny>0?y1:y0,z0+b);
+        else values.push(x0+a,y0+b,nz>0?z1:z0);
+    }
+    blockHighlightVertexCount = values.length / 3;
+    blockHighlightLines.fill(0);
     blockHighlightLines.set(values);
     game.gl.bindBuffer(game.gl.ARRAY_BUFFER, lineVBO);
-    game.gl.bufferSubData(game.gl.ARRAY_BUFFER, 0, blockHighlightLines);
+    game.gl.bufferSubData(game.gl.ARRAY_BUFFER, 0, blockHighlightLines.subarray(0, values.length));
 }
 
 // ====== FRUSTUM CULLING ======
@@ -132,13 +146,16 @@ function aabbOverlapsSolid(aabb) {
     for(let y = y0; y <= y1; y++)
         for(let z = z0; z <= z1; z++)
             for(let x = x0; x <= x1; x++) {
-                if(isSolid(getBlock(x, y, z))) return true;
+                const block=getBlock(x,y,z),boxes=getBlockCollisionBoxes(block,x,y,z);
+                if(boxesOverlapAabb(aabb,x,y,z,boxes))return true;
             }
     return false;
 }
 
+function highestSupportY(px,pz,aroundY){const hw=game.player.width/2,x0=Math.floor(px-hw),x1=Math.ceil(px+hw)-1,z0=Math.floor(pz-hw),z1=Math.ceil(pz+hw)-1;let top=-Infinity;for(let y=Math.max(0,Math.floor(aroundY)-2);y<=Math.min(CHUNK_H-1,Math.floor(aroundY)+1);y++)for(let z=z0;z<=z1;z++)for(let x=x0;x<=x1;x++)for(const box of getBlockCollisionBoxes(getBlock(x,y,z),x,y,z)){if(px+hw>x+box[0]&&px-hw<x+box[3]&&pz+hw>z+box[2]&&pz-hw<z+box[5]){const candidate=y+box[4];if(candidate<=aroundY+.3)top=Math.max(top,candidate);}}return top;}
+
 function updatePlayer(dt) {
-    if(game.inventoryOpen || game.tradeTarget || game.petPanelOpen || game.questPanelOpen || game.craftingTableOpen || game.furnaceOpen || game.controlsOverlayOpen) return;
+    if(game.inventoryOpen || game.tradeTarget || game.petPanelOpen || game.questPanelOpen || game.craftingTableOpen || game.furnaceOpen || game.chestOpen || game.controlsOverlayOpen) return;
 
     // Movement direction from game.keys. sin/cos already give a unit vector,
     // so the vec3_normalize / array wrappers were redundant — inline as
@@ -148,10 +165,10 @@ function updatePlayer(dt) {
     const rightX = cy, rightZ = -sy;
 
     let mx = 0, mz = 0;
-    if(game.keys['KeyW'] || game.keys['ArrowUp'])    { mx += fwdX;   mz += fwdZ; }
-    if(game.keys['KeyS'] || game.keys['ArrowDown'])  { mx -= fwdX;   mz -= fwdZ; }
-    if(game.keys['KeyA'] || game.keys['ArrowLeft'])  { mx -= rightX; mz -= rightZ; }
-    if(game.keys['KeyD'] || game.keys['ArrowRight']) { mx += rightX; mz += rightZ; }
+    if(game.keys[game.keyBindings.forward]) { mx += fwdX; mz += fwdZ; }
+    if(game.keys[game.keyBindings.back]) { mx -= fwdX; mz -= fwdZ; }
+    if(game.keys[game.keyBindings.left]) { mx -= rightX; mz -= rightZ; }
+    if(game.keys[game.keyBindings.right]) { mx += rightX; mz += rightZ; }
 
     const len = Math.sqrt(mx*mx + mz*mz);
     const descendKey = game.keys['ShiftLeft'] || game.keys['ShiftRight'] || game.keys['ControlLeft'] || game.keys['ControlRight'];
@@ -182,6 +199,8 @@ function updatePlayer(dt) {
             game.player.onGround = false;
             if(typeof addSurvivalExertion === 'function') addSurvivalExertion(SURVIVAL_JUMP_HUNGER_COST);
         }
+        const bodyBlock=getBlock(Math.floor(game.player.x),Math.floor(game.player.y+.8),Math.floor(game.player.z));
+        if(bodyBlock===WAFER_LADDER){game.player.vy=Math.max(game.player.vy,(game.keys[game.keyBindings.forward]||game.keys.Space)?3:-2);game.player.onGround=false;}
     }
 
     // Move X with auto-step
@@ -196,29 +215,17 @@ function updatePlayer(dt) {
     }
 
     // Move Y
-    const newY = game.player.y + game.player.vy * dt;
-    if(!aabbOverlapsSolid(playerAABB(game.player.x, newY, game.player.z))) {
-        game.player.y = newY;
+    const impactVelocity = game.player.vy;
+    const verticalMotion=CandyCore.computeMotionSubsteps(0,game.player.vy*dt,0,.25);let verticalCollision=false;
+    for(let step=0;step<verticalMotion.steps;step++){const candidateY=game.player.y+verticalMotion.dy;if(aabbOverlapsSolid(playerAABB(game.player.x,candidateY,game.player.z))){verticalCollision=true;break;}game.player.y=candidateY;}
+    if(!verticalCollision) {
         game.player.onGround = false;
     } else {
         if(game.player.vy < 0) {
             game.player.onGround = true;
-            // Snap feet to the top of the highest solid block under the
-            // game.player's XZ footprint at or below current y. Scanning down
-            // (instead of up) means we never punch the game.player through an
-            // overhanging block.
-            const hw = game.player.width / 2;
-            const px0 = Math.floor(game.player.x - hw);
-            const px1 = Math.ceil(game.player.x + hw) - 1;
-            const pz0 = Math.floor(game.player.z - hw);
-            const pz1 = Math.ceil(game.player.z + hw) - 1;
-            for(let yi = Math.floor(game.player.y); yi >= 0; yi--) {
-                let solid = false;
-                for(let x = px0; x <= px1 && !solid; x++)
-                    for(let z = pz0; z <= pz1 && !solid; z++)
-                        if(isSolid(getBlock(x, yi, z))) solid = true;
-                if(solid) { game.player.y = yi + 1; break; }
-            }
+            const support=highestSupportY(game.player.x,game.player.z,game.player.y);
+            if(Number.isFinite(support))game.player.y=support;
+            if(impactVelocity < -11) damagePlayer(Math.floor((Math.abs(impactVelocity)-10)*.7),{type:'fall'});
         }
         game.player.vy = 0;
     }
@@ -244,10 +251,20 @@ function updatePlayer(dt) {
         var currentBiome = getBiome(Math.floor(game.player.x), Math.floor(game.player.z));
         trackBiomeVisit(currentBiome);
     }
+    if(typeof trackStructureDiscovery==='function')trackStructureDiscovery();
+    const savedMove=game.persistenceMovement;savedMove.elapsed+=dt;if(savedMove.elapsed>=1&&((game.player.x-savedMove.x)**2+(game.player.z-savedMove.z)**2)>=.25){savedMove.x=game.player.x;savedMove.z=game.player.z;savedMove.elapsed=0;scheduleSaveGame();}
 }
 
 // ====== INVENTORY SYSTEM ======
 function initInventory() {
+    game.inventory.fill(null);
+    if(game.worldMode === 'survival') return;
+    if(game.worldMode === 'cozy') {
+        game.inventory[0]={id:ITEM_COOKIE,count:3};
+        game.inventory[1]={id:WOOD,count:4};
+        game.inventory[2]={id:FROSTING_WHITE,count:4};
+        return;
+    }
     game.inventory[0] = { id: DIRT, count: 64 };
     game.inventory[1] = { id: STONE, count: 64 };
     game.inventory[2] = { id: PLANKS, count: 32 };
@@ -257,6 +274,7 @@ function initInventory() {
     game.inventory[6] = { id: FROSTING_PINK, count: 32 };
     game.inventory[7] = { id: LEAVES, count: 32 };
     game.inventory[8] = { id: WOOD, count: 32 };
+    if(game.worldMode === 'creative') { game.creativeMode=true; populateCreativeInventory(); game.flyMode=true; }
 }
 
 function addItem(id, count) {
@@ -356,6 +374,8 @@ function removeFromSlot(slot) {
 
 let cursorStackX = window.innerWidth * 0.5;
 let cursorStackY = window.innerHeight * 0.5;
+const inventoryDrag={active:false,indices:new Set(),suppressClick:false};
+document.addEventListener('mouseup',()=>{if(!inventoryDrag.active)return;inventoryDrag.active=false;if(inventoryDrag.indices.size>1&&game.cursorStack){const result=CandyCore.distributeStack(game.inventory,game.cursorStack,[...inventoryDrag.indices],getItemMaxStack);game.inventory=result.slots;game.cursorStack=result.cursor;inventoryDrag.suppressClick=result.moved>0;if(result.moved){updateInventoryUI();updateHotbar();scheduleSaveGame();}}inventoryDrag.indices.clear();});
 
 function updateCursorStackPosition(x, y) {
     cursorStackX = x;
@@ -373,7 +393,7 @@ function updateCursorStackUI() {
     if(!cursor) return;
 
     cursor.innerHTML = '';
-    if(!game.inventoryOpen || !game.cursorStack) {
+    if((!game.inventoryOpen && !game.craftingTableOpen && !game.furnaceOpen && !game.chestOpen) || !game.cursorStack) {
         cursor.style.display = 'none';
         return;
     }
@@ -397,6 +417,7 @@ function updateCursorStackUI() {
 }
 
 // ====== HUD RENDERING ======
+function appendDurabilityBar(container,slot){if(!slot||!isToolItem(slot.id))return;const max=getToolMaxDurability(slot.id),value=Number.isFinite(slot.durability)?slot.durability:max,bar=document.createElement('span');bar.className='durability-bar';bar.style.setProperty('--durability',String(value/max));bar.title=value+' / '+max+' durability';container.appendChild(bar);}
 function updateHotbar() {
     const hotbar = document.getElementById('hotbar');
     hotbar.innerHTML = '';
@@ -418,6 +439,7 @@ function updateHotbar() {
                 cnt.textContent = game.inventory[i].count;
                 slot.appendChild(cnt);
             }
+            appendDurabilityBar(slot,game.inventory[i]);
         }
         slot.addEventListener('click', () => {
             game.selectedSlot = i;
@@ -427,6 +449,76 @@ function updateHotbar() {
         hotbar.appendChild(slot);
     }
     if(typeof updateRecipeGuideUI === 'function') updateRecipeGuideUI();
+    updateHeldItemUI();
+}
+
+function updateHeldItemUI() {
+    const item = game.inventory[game.selectedSlot];
+    const id = item ? item.id : null;
+    const icon = document.getElementById('held-item-icon');
+    const name = document.getElementById('selected-item-name');
+    if(icon) {
+        if(id == null) {
+            icon.style.backgroundImage = 'none';
+            icon.style.backgroundColor = 'transparent';
+            icon.classList.add('empty');
+        } else {
+            icon.classList.remove('empty');
+            setItemIcon(icon, id);
+        }
+    }
+    if(id !== game.presentation.heldItemId) {
+        game.presentation.heldItemId = id;
+        game.presentation.labelUntil = performance.now() + 1600;
+        if(name) name.textContent = id == null ? 'Empty hands' : (BLOCK_NAMES[id] || 'Unknown item');
+    }
+}
+
+function playViewAction(action, duration) {
+    if((action==='mine'||action==='attack')&&(game.presentation.action!==action||game.presentation.actionTime<=.04))CandyEvents.emit('toolSwing',{action,position:{x:game.player.x,y:game.player.y+1,z:game.player.z}});
+    game.presentation.action = action || 'interact';
+    game.presentation.actionTime = Math.max(game.presentation.actionTime, duration || 0.3);
+}
+
+function updateFirstPersonPresentation(dt) {
+    const p = game.presentation;
+    const dx = game.player.x - p.prevX, dz = game.player.z - p.prevZ;
+    const speed = Math.min(8, Math.sqrt(dx*dx + dz*dz) / Math.max(0.001, dt));
+    p.prevX = game.player.x; p.prevZ = game.player.z;
+    if(speed > 0.08 && game.player.onGround) p.bobPhase += dt * (7 + speed * 0.75);
+    if(speed>.3&&game.player.onGround){p.stepDistance+=speed*dt;const interval=speed>5.2?1.45:1.8;if(p.stepDistance>=interval){p.stepDistance%=interval;CandyEvents.emit('footstep',{blockId:getBlock(Math.floor(game.player.x),Math.max(0,Math.floor(game.player.y)-1),Math.floor(game.player.z)),position:{x:game.player.x,y:game.player.y,z:game.player.z}});}}else if(!game.player.onGround)p.stepDistance=0;
+    const motion = game.settings.reducedMotion ? 0 : game.settings.viewBob;
+    const targetBobX = Math.cos(p.bobPhase) * Math.min(1, speed/5) * 0.018 * motion;
+    const targetBobY = Math.abs(Math.sin(p.bobPhase)) * Math.min(1, speed/5) * 0.025 * motion;
+    p.bobX += (targetBobX - p.bobX) * Math.min(1, dt*12);
+    p.bobY += (targetBobY - p.bobY) * Math.min(1, dt*12);
+    if(!p.wasGrounded && game.player.onGround && p.previousYVelocity < -5) {
+        p.landingDip = Math.min(0.1, Math.abs(p.previousYVelocity) * 0.006) * (game.settings.reducedMotion?0:game.settings.cameraShake);
+        playViewAction('land', 0.22);
+    }
+    p.landingDip += (0 - p.landingDip) * Math.min(1, dt*11);
+    p.wasGrounded = game.player.onGround;
+    p.previousYVelocity = game.player.vy;
+    p.actionTime = Math.max(0, p.actionTime-dt);
+    if(p.actionTime === 0) p.action = 'idle';
+
+    const sprinting = speed > 5.2 && game.player.onGround;
+    const targetFov = game.settings.fov + (sprinting && !game.settings.reducedMotion ? 6 : 0);
+    p.currentFov += (targetFov-p.currentFov) * Math.min(1,dt*7);
+    game.projMatrix = mat4_perspective(Math.PI/180*p.currentFov, game.canvas.width/game.canvas.height,0.1,200);
+
+    const held = document.getElementById('held-item');
+    const blocked = isGameplayInputBlocked() || !game.worldLoaded || !game.pointerLocked;
+    if(held) {
+        held.hidden = blocked;
+        const actionProgress = p.actionTime > 0 ? Math.sin(Math.min(1,p.actionTime/0.3)*Math.PI) : 0;
+        const swing = (p.action === 'mine' || p.action === 'place' || p.action === 'attack') ? actionProgress : 0;
+        const eat = p.action === 'eat' ? actionProgress : 0;
+        held.style.transform = `translate3d(${p.bobX*420-swing*45}px,${p.bobY*220+p.landingDip*240-eat*55}px,0) rotate(${swing*28-eat*12}deg)`;
+    }
+    const label = document.getElementById('selected-item-name');
+    if(label) label.classList.toggle('visible', performance.now() < p.labelUntil && !blocked);
+    return {x:p.bobX,y:p.bobY+p.landingDip};
 }
 
 function updateHearts() {
@@ -434,11 +526,10 @@ function updateHearts() {
     div.innerHTML = '';
     for(let i = 0; i < 10; i++) {
         const h = document.createElement('span');
-        h.className = 'heart';
-        h.innerHTML = '&#10084;'; // heart
-        h.style.color = (i < Math.ceil(game.playerHealth / 2)) ? '#FF1493' : '#555';
+        h.className = 'heart ' + (i < Math.ceil(game.playerHealth / 2) ? 'full' : 'empty');
         div.appendChild(h);
     }
+    div.setAttribute('aria-label', 'Health ' + Math.ceil(game.playerHealth) + ' of 20');
 }
 
 function updateHunger() {
@@ -446,19 +537,20 @@ function updateHunger() {
     div.innerHTML = '';
     for(let i = 0; i < 10; i++) {
         const c = document.createElement('span');
-        c.className = 'cupcake';
-        c.innerHTML = '&#9829;'; // hunger icon
-        c.style.color = (i < Math.ceil(game.playerHunger / 2)) ? '#FF69B4' : '#555';
+        c.className = 'cupcake ' + (i < Math.ceil(game.playerHunger / 2) ? 'full' : 'empty');
         div.appendChild(c);
     }
+    div.setAttribute('aria-label', 'Hunger ' + Math.ceil(game.playerHunger) + ' of 20');
 }
 
 function updateInventoryUI() {
     const grid = document.getElementById('inv-grid');
     grid.innerHTML = '';
+    const creativeTools=document.getElementById('creative-inventory-tools');creativeTools.hidden=!game.creativeMode;const search=document.getElementById('creative-search').value.trim().toLowerCase(),category=document.getElementById('creative-category').value;
     const slotCount = game.inventory.length;
     for(let i = 0; i < slotCount; i++) {
-        const slot = document.createElement('div');
+        const candidate=game.inventory[i];if(game.creativeMode&&candidate){const name=(BLOCK_NAMES[candidate.id]||'').toLowerCase(),matchesCategory=category==='all'||category==='blocks'&&candidate.id<=LAST_BLOCK||category==='tools'&&isToolItem(candidate.id)||category==='food'&&isTreatItem(candidate.id)||category==='materials'&&candidate.id>LAST_BLOCK&&!isToolItem(candidate.id)&&!isTreatItem(candidate.id);if(search&&!name.includes(search)||!matchesCategory)continue;}
+        const slot = document.createElement('button');slot.type='button';slot.setAttribute('role','gridcell');slot.setAttribute('aria-label','Inventory slot '+(i+1)+(game.inventory[i]?' '+game.inventory[i].count+' '+BLOCK_NAMES[game.inventory[i].id]:' empty'));
         slot.className = 'inv-slot';
         slot.dataset.slot = i;
         if(game.inventory[i]) {
@@ -473,10 +565,13 @@ function updateInventoryUI() {
                 cnt.textContent = game.inventory[i].count;
                 slot.appendChild(cnt);
             }
+            appendDurabilityBar(slot,game.inventory[i]);
         }
-        slot.addEventListener('click', () => {
+        slot.addEventListener('click', (event) => {
             // Click handling for game.inventory
             const slotIdx = parseInt(slot.dataset.slot);
+            if(inventoryDrag.suppressClick){inventoryDrag.suppressClick=false;event.preventDefault();return;}
+            if(event.shiftKey&&game.inventory[slotIdx]){if(game.chestOpen&&game.chestPos){const chest=getChestState(game.chestPos),moved=CandyCore.transferBetween(game.inventory,chest.slots,slotIdx,getItemMaxStack);if(moved.ok){game.inventory=moved.source;chest.slots=moved.destination;renderChestUI();}}else{const destinations=slotIdx<9?Array.from({length:27},(_,n)=>n+9):Array.from({length:9},(_,n)=>n),moved=CandyCore.transferStack(game.inventory,slotIdx,destinations,getItemMaxStack);if(moved.ok)game.inventory=moved.slots;}updateInventoryUI();updateHotbar();scheduleSaveGame();return;}
             if(game.cursorStack === null) {
                 if(game.inventory[slotIdx]) {
                     game.cursorStack = game.inventory[slotIdx];
@@ -505,10 +600,14 @@ function updateInventoryUI() {
             updateHotbar();
             if(typeof scheduleSaveGame === 'function') scheduleSaveGame();
         });
+        slot.addEventListener('mousedown',event=>{if(event.button===0&&game.cursorStack){inventoryDrag.active=true;inventoryDrag.indices.clear();inventoryDrag.indices.add(Number(slot.dataset.slot));event.preventDefault();}});slot.addEventListener('mouseenter',()=>{if(inventoryDrag.active)inventoryDrag.indices.add(Number(slot.dataset.slot));});
+        slot.addEventListener('contextmenu',event=>{event.preventDefault();const slotIdx=Number(slot.dataset.slot),held=game.inventory[slotIdx];if(!game.cursorStack&&held){const split=CandyCore.splitStack(held);game.cursorStack=split.cursor;game.inventory[slotIdx]=split.slot;}else if(game.cursorStack){if(!held){game.inventory[slotIdx]={id:game.cursorStack.id,count:1};game.cursorStack.count--;}else if(held.id===game.cursorStack.id&&held.count<getItemMaxStack(held.id)){held.count++;game.cursorStack.count--;}if(game.cursorStack.count<=0)game.cursorStack=null;}updateInventoryUI();updateHotbar();scheduleSaveGame();});
+        slot.addEventListener('dblclick',()=>{const held=game.inventory[i];if(!held)return;const max=getItemMaxStack(held.id);for(let j=0;j<game.inventory.length&&held.count<max;j++){if(j===i||!game.inventory[j]||game.inventory[j].id!==held.id)continue;const take=Math.min(max-held.count,game.inventory[j].count);held.count+=take;game.inventory[j].count-=take;if(game.inventory[j].count===0)game.inventory[j]=null;}updateInventoryUI();updateHotbar();scheduleSaveGame();});
         grid.appendChild(slot);
     }
     updateCursorStackUI();
 }
+document.getElementById('creative-search').addEventListener('input',updateInventoryUI);document.getElementById('creative-category').addEventListener('change',updateInventoryUI);
 
 // ====== CREATIVE MODE SYSTEM ======
 function toggleCreativeMode() {
@@ -529,14 +628,14 @@ function toggleCreativeMode() {
     updateHotbar();
     if (typeof scheduleSaveGame === 'function') scheduleSaveGame();
     // Quest hook: creative toggle
-    if (typeof advanceQuest === 'function') advanceQuest('toggle-creative');
+    CandyEvents.emit('creativeToggled',{enabled:game.creativeMode});
 }
 
 function populateCreativeInventory() {
     // Count all creative items to determine game.inventory size
     let creativeItems = [];
     // Add all blocks (IDs 1-32, excluding AIR=0 and WATER=5)
-    for (let id = 1; id <= 32; id++) {
+    for (let id = 1; id <= LAST_BLOCK; id++) {
         if (id === 5) continue; // Skip WATER (AIR=0 is already outside the loop range)
         if (!BLOCK_TILES[id]) continue; // Skip blocks without tiles
         creativeItems.push({ id: id, count: 64 });
@@ -573,7 +672,7 @@ function updateModeIndicator() {
     }
     const btn = document.getElementById('creative-toggle');
     if (btn) {
-        btn.textContent = game.creativeMode ? '✨ Creative' : '🎮 Survival';
+        btn.textContent = game.creativeMode ? 'CREATIVE' : 'SURVIVAL';
     }
 }
 
@@ -581,7 +680,7 @@ function updateModeIndicator() {
 const creativeToggleBtn = document.getElementById('creative-toggle');
 if(creativeToggleBtn) {
     creativeToggleBtn.addEventListener('click', function() {
-        toggleCreativeMode();
+        showQuestNotification('World rules are chosen when the world is created.');
     });
 }
 
@@ -602,6 +701,7 @@ function toggleInventory() {
         updateInventoryUI();
         updateCraftingUI();
     } else {
+        returnCraftGrid('crafting');
         if(game.cursorStack) {
             addItem(game.cursorStack.id, game.cursorStack.count);
             game.cursorStack = null;
@@ -619,6 +719,7 @@ function toggleInventory() {
 function openCraftingTableUI(bx, by, bz) {
     // Close any other open UIs first
     if(game.inventoryOpen) {
+        returnCraftGrid('crafting');
         game.inventoryOpen = false;
         document.getElementById('inventory-overlay').style.display = 'none';
         if(game.cursorStack) { addItem(game.cursorStack.id, game.cursorStack.count); game.cursorStack = null; }
@@ -638,6 +739,7 @@ function openCraftingTableUI(bx, by, bz) {
 }
 
 function closeCraftingTableUI() {
+    returnCraftGrid('table');
     game.craftingTableOpen = false;
     game.craftingTablePos = null;
     document.getElementById('crafting-table-overlay').style.display = 'none';
@@ -649,6 +751,7 @@ function closeCraftingTableUI() {
 function openFurnaceUI(bx, by, bz) {
     // Close any other open UIs first
     if(game.inventoryOpen) {
+        returnCraftGrid('crafting');
         game.inventoryOpen = false;
         document.getElementById('inventory-overlay').style.display = 'none';
         if(game.cursorStack) { addItem(game.cursorStack.id, game.cursorStack.count); game.cursorStack = null; }
@@ -664,13 +767,17 @@ function openFurnaceUI(bx, by, bz) {
     if(typeof exitGamePointerLock === 'function') exitGamePointerLock();
     else if(document.exitPointerLock) document.exitPointerLock();
     document.getElementById('furnace-overlay').style.display = 'flex';
+    const ovenState=getOvenState(game.furnacePos,true);
+    applyOvenOfflineProgress(game.furnacePos,ovenState);
     if(typeof updateFurnaceUI === 'function') updateFurnaceUI();
 }
 
 function closeFurnaceUI() {
+    if(game.cursorStack){if(!addItem(game.cursorStack.id,game.cursorStack.count))spawnItemDrop(game.cursorStack.id,game.cursorStack.count,game.player.x,game.player.y+1,game.player.z);game.cursorStack=null;}
     game.furnaceOpen = false;
     game.furnacePos = null;
     document.getElementById('furnace-overlay').style.display = 'none';
+    updateCursorStackUI();
     if(typeof requestGamePointerLock === 'function') requestGamePointerLock();
     else if(game.canvas.requestPointerLock) game.canvas.requestPointerLock();
 }

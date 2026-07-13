@@ -554,25 +554,32 @@ const VILLAGER_TRADE_TEMPLATES = {
 function generateVillagerTrades(mobType) {
     const templates = VILLAGER_TRADE_TEMPLATES[mobType];
     if (!templates) return [];
-    // Pick 3-4 random trades
-    const shuffled = [...templates].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, 3 + Math.floor(Math.random() * 2));
+    const args=Array.prototype.slice.call(arguments,1),rng=CandyCore.createRng(game.worldSeed||'legacy-candy-world','villager-trades',mobType,...args);
+    const ranked=templates.map((trade,index)=>({trade,rank:rng(),index})).sort((a,b)=>a.rank-b.rank||a.index-b.index);
+    return ranked.slice(0,3+(rng()>.55?1:0)).map(entry=>JSON.parse(JSON.stringify(entry.trade)));
 }
 
 function spawnMob(type, x, y, z, baby) {
     if (game.mobs.length >= game.MAX_MOBS) return null;
+    const spawnRng=CandyCore.createRng(game.worldSeed||'legacy-candy-world','mob-instance',game.generatorVersion,type,Math.floor(x*2),Math.floor(y*2),Math.floor(z*2),baby?1:0);
     const mob = {
         type, x, y, z,
         vx: 0, vy: 0, vz: 0,
-        yaw: Math.random() * Math.PI * 2,
-        targetYaw: Math.random() * Math.PI * 2,
+        yaw: spawnRng() * Math.PI * 2,
+        targetYaw: spawnRng() * Math.PI * 2,
         state: 'idle',
-        stateTimer: 2 + Math.random() * 3,
+        stateTimer: 2 + spawnRng() * 3,
         baby: !!baby,
         trades: null,
         built: false,
         tamed: false,
         petName: '',
+        petCommand:'follow',affection:0,reputation:0,ambient:'blink',ambientTimer:1,
+        maxHealth: type===MOB_WARDEN?30:(type===MOB_CANDY_VILLAGER||type===MOB_GINGER_VILLAGER?14:10),
+        health: type===MOB_WARDEN?30:(type===MOB_CANDY_VILLAGER||type===MOB_GINGER_VILLAGER?14:10),
+        hurtTime:0,
+        attackCooldown:0,
+        dead:false,
         // New for quality upgrade: independent animation clock, head look offset, and procedural color variant
         animTime: 0,
         headYaw: 0,
@@ -584,15 +591,47 @@ function spawnMob(type, x, y, z, baby) {
         _prevGeom: null
     };
     if (type === MOB_CANDY_VILLAGER || type === MOB_GINGER_VILLAGER) {
-        mob.trades = generateVillagerTrades(type);
+        const identity=CandyCore.mixSeed(game.worldSeed||'legacy-candy-world','villager',Math.floor(x),Math.floor(z),type);
+        mob.profession=['baker','builder','gardener','map-maker'][identity%4];mob.identity=identity;
+        mob.trades = generateVillagerTrades(type,identity);
     }
     game.mobs.push(mob);
     return mob;
 }
 
+function getAttackDamage(itemId) {
+    return CandyCore.getSwordDamage(itemId,ITEM_WOOD_SWORD);
+}
+
+function damageMob(mob,amount,source) {
+    if(!mob||mob.dead||mob.hurtTime>0)return false;
+    mob.health=Math.max(0,(mob.health??mob.maxHealth??10)-amount);mob.hurtTime=.35;
+    const dx=mob.x-game.player.x,dz=mob.z-game.player.z,len=Math.max(.1,Math.sqrt(dx*dx+dz*dz));
+    mob.vx+=dx/len*5;mob.vz+=dz/len*5;mob.vy=3;
+    CandyEvents.emit('entityDamaged',{entity:mob,amount,position:mob});
+    spawnBlockFeedback({x:mob.x-.5,y:mob.y,z:mob.z-.5,nx:0,ny:1,nz:0},FROSTING_PINK,5);
+    if(mob.health<=0)killMob(mob,source);return true;
+}
+
+function killMob(mob,source) {
+    if(mob.dead)return;mob.dead=true;
+    const index=game.mobs.indexOf(mob);if(index>=0)game.mobs.splice(index,1);
+    if(mob.tamed){const petIndex=game.tamedPets.indexOf(mob);if(petIndex>=0)game.tamedPets.splice(petIndex,1);}
+    const loot=mob.type===MOB_WARDEN?[{id:REDSTONE_ORE,count:2}]:mob.type===MOB_CHICKEN?[{id:ITEM_COOKIE,count:1}]:[{id:ITEM_SUGAR,count:1}];
+    for(const drop of loot)spawnItemDrop(drop.id,drop.count,mob.x,mob.y+.5,mob.z,{x:0,y:2,z:0});
+}
+
+function tryAttackMob() {
+    if(game.combat.attackCooldown>0)return false;
+    const target=findTargetMob(4.2);if(!target)return false;
+    if(game.targetBlock&&game.targetBlock.dist<target.dist-.15)return false;
+    game.combat.attackCooldown=.52;playViewAction('attack',.32);
+    const hit=damageMob(target.mob,getAttackDamage(game.inventory[game.selectedSlot]?.id),game.player);if(hit)damageHeldTool(1);return hit;
+}
+
 function findGround(x, z) {
     for (let y = CHUNK_H - 1; y >= 0; y--) {
-        if (isSolid(getBlock(x, y, z))) return y + 1;
+        const boxes=getBlockCollisionBoxes(getBlock(x,y,z),x,y,z);if(boxes.length)return y+Math.max(...boxes.map(box=>box[4]));
     }
     return 1;
 }
@@ -668,25 +707,25 @@ function getMobTypesForBiome(biome, r) {
     return { mobTypes, maxSpawn };
 }
 
-function trySpawnMobAt(x, z, mobTypes) {
+function trySpawnMobAt(x, z, mobTypes, roll) {
     if (!mobTypes || mobTypes.length === 0) return false;
     const clampX = Math.max(1, Math.min(WORLD_W - 2, Math.floor(x)));
     const clampZ = Math.max(1, Math.min(WORLD_D - 2, Math.floor(z)));
     const gy = findGround(clampX, clampZ);
     if (gy < WATER_LEVEL - 2 || !isDryMobColumn(clampX, clampZ)) return false;
-    const mt = mobTypes[Math.floor(Math.random() * mobTypes.length)];
-    const isBaby = Math.random() < 0.2;
+    const rng=roll||CandyCore.createRng(game.worldSeed||'legacy-candy-world','mob-at',game.generatorVersion,clampX,clampZ);
+    const mt = mobTypes[Math.floor(rng() * mobTypes.length)];
+    const isBaby = rng() < 0.2;
     return spawnMob(mt, clampX + 0.5, gy, clampZ + 0.5, isBaby) !== null;
 }
 
 function getChunkOrderFromCenter(cx0, cz0) {
     const chunks = [];
-    for (let cz = 0; cz < WORLD_CZ; cz++) {
-        for (let cx = 0; cx < WORLD_CX; cx++) {
+    for (const key of game.chunks.keys()) {
+            const cx=Math.floor(key/WORLD_CZ),cz=key%WORLD_CZ;
             const dx = cx - cx0;
             const dz = cz - cz0;
             chunks.push({ cx, cz, dist: dx * dx + dz * dz });
-        }
     }
     chunks.sort((a, b) => a.dist - b.dist);
     return chunks;
@@ -764,12 +803,13 @@ function ensureAnimalsNearSpawn(spawnX, spawnZ, options) {
 }
 
 function spawnMobs(spawnX, spawnZ) {
-    const phaseATarget = 12 + Math.floor(Math.random() * 5);
+    const spawnRng=CandyCore.createRng(game.worldSeed||'legacy-candy-world','initial-mobs',game.generatorVersion,Math.floor(spawnX),Math.floor(spawnZ));
+    const phaseATarget = 12 + Math.floor(spawnRng() * 5);
     let phaseASpawned = 0;
 
     for (let attempt = 0; attempt < 30 && phaseASpawned < phaseATarget && game.mobs.length < game.MAX_MOBS; attempt++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 20 + Math.random() * 44;
+        const angle = spawnRng() * Math.PI * 2;
+        const dist = 20 + spawnRng() * 44;
         const mx = spawnX + Math.sin(angle) * dist;
         const mz = spawnZ + Math.cos(angle) * dist;
 
@@ -783,7 +823,7 @@ function spawnMobs(spawnX, spawnZ) {
         const clampZ = Math.max(1, Math.min(WORLD_D - 2, Math.floor(mz)));
         if (hasNearbyMob(clampX + 0.5, clampZ + 0.5, 6)) continue;
 
-        if (trySpawnMobAt(mx, mz, animalTypes)) phaseASpawned++;
+        if (trySpawnMobAt(mx, mz, animalTypes,spawnRng)) phaseASpawned++;
     }
 
     const cx0 = Math.floor(spawnX / 16);
@@ -800,9 +840,10 @@ function spawnMobs(spawnX, spawnZ) {
 
         let spawned = false;
         for (let attempt = 0; attempt < maxSpawn && !spawned && game.mobs.length < game.MAX_MOBS; attempt++) {
-            const mx = cx * 16 + Math.floor(Math.random() * 16);
-            const mz = cz * 16 + Math.floor(Math.random() * 16);
-            if (trySpawnMobAt(mx, mz, mobTypes)) spawned = true;
+            const chunkRng=CandyCore.createRng(game.worldSeed||'legacy-candy-world','chunk-mobs',game.generatorVersion,cx,cz,attempt);
+            const mx = cx * 16 + Math.floor(chunkRng() * 16);
+            const mz = cz * 16 + Math.floor(chunkRng() * 16);
+            if (trySpawnMobAt(mx, mz, mobTypes,chunkRng)) spawned = true;
         }
     }
 }
@@ -852,8 +893,11 @@ function buildVillagerHouses() {
 
 // ====== MOB AI ======
 function updateMobs(dt) {
+    updateSpawnManager(dt);
     for (let i = game.mobs.length - 1; i >= 0; i--) {
         const mob = game.mobs[i];
+        mob.hurtTime=Math.max(0,(mob.hurtTime||0)-dt);
+        mob.attackCooldown=Math.max(0,(mob.attackCooldown||0)-dt);
         if(!isDryMobColumn(mob.x, mob.z) && !snapMobToDryLand(mob)) {
             if(mob.tamed) continue; // Never despawn tamed pets
             if(mob === game.tradeTarget) closeTradePanel();
@@ -867,7 +911,10 @@ function updateMobs(dt) {
         if (mob.tamed) {
             const tdx = mob.x - game.player.x, tdz = mob.z - game.player.z;
             const tDist = Math.sqrt(tdx * tdx + tdz * tdz);
-            if (tDist > 3.5) {
+            if(tDist>24&&mob.petCommand!=='sit'){const safe=findNearbyDryLand(game.player.x,game.player.z,5);if(safe){mob.x=safe.x;mob.z=safe.z;mob.y=findGround(Math.floor(safe.x),Math.floor(safe.z));mob.vx=mob.vy=mob.vz=0;CandyEvents.emit('petRecovered',{position:mob});}}
+            if(mob.petCommand==='sit'){mob.state='sit';mob.vx=mob.vz=0;}
+            else if(mob.petCommand==='wander'&&tDist<10){if(mob.state==='follow')mob.state='wander';}
+            else if (tDist > 3.5) {
                 mob.state = 'follow';
                 mob.targetYaw = Math.atan2(game.player.x - mob.x, game.player.z - mob.z);
                 mob.stateTimer = 2;
@@ -889,9 +936,15 @@ function updateMobs(dt) {
         }
         } // end else (untamed mob state transitions)
 
+        mob.ambientTimer=(mob.ambientTimer||0)-dt;if(mob.ambientTimer<=0&&mob.state==='idle'){const phase=CandyCore.mixSeed(game.worldSeed||'legacy',mob._mobId,Math.floor(game.gameTime/3))%3;mob.ambient=mob.type===MOB_CHICKEN?(phase?'peck':'blink'):mob.type===MOB_COW?(phase?'graze':'tail-swish'):mob.type===MOB_PIG?(phase?'sniff':'ear-wiggle'):mob.type===MOB_SHEEP?(phase?'graze':'head-bob'):(phase?'greet':'blink');mob.ambientTimer=2+phase;mob.state=mob.ambient;mob.stateTimer=.7;}
+
         // Follow state: game.player holds treat within 8 blocks (untamed animals only)
         const dx = mob.x - game.player.x, dz = mob.z - game.player.z;
         const distToPlayer = Math.sqrt(dx * dx + dz * dz);
+        if(mob.type===MOB_WARDEN&&game.difficulty!=='peaceful'&&distToPlayer<13) {
+            mob.state='follow';mob.targetYaw=Math.atan2(game.player.x-mob.x,game.player.z-mob.z);
+            if(distToPlayer<1.7&&mob.attackCooldown<=0){mob.attackCooldown=1.15;damagePlayer(4,{type:'warden',position:mob});}
+        }
         if (!mob.tamed) {
             const held = game.inventory[game.selectedSlot];
             const holdingTreat = held && isTreatItem(held.id);
@@ -1005,7 +1058,7 @@ function updateMobs(dt) {
         // Wall detection: improved steering (feelers instead of blind 90° snap)
         const fx = Math.floor(mob.x + mob.vx * 0.6);
         const fz = Math.floor(mob.z + mob.vz * 0.6);
-        if (!isDryMobColumn(fx, fz) || isSolid(getBlock(fx, Math.floor(mob.y + 0.5), fz))) {
+        if (!isDryMobColumn(fx, fz) || getBlockCollisionBoxes(getBlock(fx,Math.floor(mob.y+.5),fz),fx,Math.floor(mob.y+.5),fz).length) {
             // Try several angled directions relative to current yaw; pick first clear one
             const feelerOffsets = [0.7, -0.7, 1.4, -1.4, 2.2, -2.2];
             let chosen = mob.yaw + Math.PI * 0.6 + (Math.random() - 0.5) * 0.8;
@@ -1025,6 +1078,30 @@ function updateMobs(dt) {
         // Keep in world bounds
         mob.x = Math.max(1, Math.min(WORLD_W - 2, mob.x));
         mob.z = Math.max(1, Math.min(WORLD_D - 2, mob.z));
+    }
+}
+
+function updateSpawnManager(dt) {
+    if(dt<=0)return;
+    const t=game.dayTime/DAY_CYCLE_LENGTH,cycle=Math.floor(game.gameTime/DAY_CYCLE_LENGTH);
+    const night=t>=.55&&t<.9;
+    if(t>=.45&&t<.55&&game.spawnManager.warnedCycle!==cycle){game.spawnManager.warnedCycle=cycle;showQuestNotification('The peppermint moon is rising. Find light or shelter!');}
+    if(!night) {
+        if(t>.9||t<.15) for(let i=game.mobs.length-1;i>=0;i--){const mob=game.mobs[i];if(mob.type===MOB_WARDEN&&!mob.tamed){const dx=mob.x-game.player.x,dz=mob.z-game.player.z;if(dx*dx+dz*dz>18*18)game.mobs.splice(i,1);}}
+        return;
+    }
+    if(game.difficulty==='peaceful')return;
+    game.spawnManager.timer-=dt;if(game.spawnManager.timer>0)return;game.spawnManager.timer=2.5;
+    if(game.mobs.filter(m=>m.type===MOB_WARDEN).length>=6||game.mobs.length>=game.MAX_MOBS)return;
+    const rng=CandyCore.createRng('night-spawn',cycle,game.spawnManager.sequence++);
+    for(let attempt=0;attempt<8;attempt++) {
+        const angle=rng()*Math.PI*2,distance=18+rng()*15;
+        const x=Math.floor(game.player.x+Math.cos(angle)*distance),z=Math.floor(game.player.z+Math.sin(angle)*distance);
+        if(x<2||x>=WORLD_W-2||z<2||z>=WORLD_D-2)continue;
+        const spawnDx=x-game.spawnPoint.x,spawnDz=z-game.spawnPoint.z;if(spawnDx*spawnDx+spawnDz*spawnDz<14*14)continue;
+        const y=findGround(x,z);const localLight=Math.max(getBlockLightAt(x,y+1,z),getSkyLightAt(x,y+1,z)*game.daylight);
+        if(localLight>.24||getBlock(x,y,z)===WATER||getBlock(x,y+1,z)!==AIR)continue;
+        spawnMob(MOB_WARDEN,x+.5,y,z+.5,false);break;
     }
 }
 
@@ -1116,7 +1193,7 @@ function renderMobs(vp) {
     game.gl.uniformMatrix4fv(mUni.uVP, false, vp);
     game.gl.uniform3f(mUni.uCamPos, game.player.x, game.player.y + 1.62, game.player.z);
     game.gl.uniform1f(mUni.uDaylight, game.daylight);
-    game.gl.uniform3f(mUni.uFogColor, game.skyR, game.skyG, game.skyB);
+    game.gl.uniform3f(mUni.uFogColor, game.fogR, game.fogG, game.fogB);
 
     if (!mobVAO) {
         mobVAO = game.gl.createVertexArray();
@@ -1225,8 +1302,8 @@ function openTradePanel(mob) {
                 // Execute trade
                 for (const g of trade.give) removeItem(g.id, g.count);
                 addItem(trade.receive.id, trade.receive.count);
-                // Quest hook: trade completion
-                if (typeof advanceQuest === 'function') advanceQuest('complete-trade');
+                mob.reputation=Math.min(100,(mob.reputation||0)+1);
+                CandyEvents.emit('tradeCompleted',{profession:mob.profession||'candy-maker',position:mob});
                 openTradePanel(mob); // refresh
                 updateHotbar();
             });
@@ -1354,12 +1431,7 @@ function tameAnimal(mob) {
     }
 
     // Quest hooks for taming
-    if (typeof advanceQuest === 'function') {
-        advanceQuest('tame-animal');
-        if (mob.type === MOB_UNICORN) {
-            advanceQuest('tame-unicorn');
-        }
-    }
+    if (mob.type === MOB_UNICORN) CandyEvents.emit('unicornTamed',{type:mob.type,position:mob});
 
     if (typeof scheduleSaveGame === 'function') scheduleSaveGame();
     updatePetPanel();
@@ -1369,6 +1441,7 @@ function renamePet(mob, newName) {
     mob.petName = newName || MOB_NAMES[mob.type];
     if (typeof scheduleSaveGame === 'function') scheduleSaveGame();
 }
+function setPetCommand(pet,command){if(!pet||!['follow','sit','wander'].includes(command))return;pet.petCommand=command;pet.state=command==='sit'?'sit':command;pet.stateTimer=command==='sit'?999:1;CandyEvents.emit('ui',{confirm:true});scheduleSaveGame();updatePetPanel();}
 
 function updatePetPanel() {
     const list = document.getElementById('pet-list');
@@ -1410,6 +1483,8 @@ function updatePetPanel() {
             e.stopPropagation(); // prevent game game.keys while typing
         });
         row.appendChild(nameInput);
+
+        const commands=document.createElement('div');commands.className='pet-commands';for(const command of ['follow','sit','wander']){const button=document.createElement('button');button.type='button';button.textContent=command;button.setAttribute('aria-pressed',String((pet.petCommand||'follow')===command));button.addEventListener('click',()=>setPetCommand(pet,command));commands.appendChild(button);}row.appendChild(commands);
 
         list.appendChild(row);
     }
@@ -1518,6 +1593,10 @@ function eatTreat(treatId) {
         case ITEM_LOLLIPOP:
             restorePlayerHunger(3);
             addEffect(EFFECT_JUMP, 20);
+            break;
+        case ITEM_GUMMY_BERRIES:
+            restorePlayerHunger(2);
+            restorePlayerHealth(1);
             break;
     }
     // Spawn burst of game.particles when eating
