@@ -298,7 +298,7 @@ function handleCraftGridSlot(category,index) {
     const config=getCraftGridConfig(category),slot=config.grid[index];
     if(!game.cursorStack&&slot){game.cursorStack=slot;config.grid[index]=null;}
     else if(game.cursorStack&&!slot){config.grid[index]=game.cursorStack;game.cursorStack=null;}
-    else if(game.cursorStack&&slot&&slot.id===game.cursorStack.id){const space=64-slot.count,move=Math.min(space,game.cursorStack.count);slot.count+=move;game.cursorStack.count-=move;if(game.cursorStack.count<=0)game.cursorStack=null;}
+    else if(game.cursorStack&&slot&&slot.id===game.cursorStack.id&&CandyCore.stackMetadataMatches(slot,game.cursorStack)){const space=getItemMaxStack(slot.id)-slot.count,move=Math.min(space,game.cursorStack.count);slot.count+=move;game.cursorStack.count-=move;if(game.cursorStack.count<=0)game.cursorStack=null;}
     else if(game.cursorStack&&slot){config.grid[index]=game.cursorStack;game.cursorStack=slot;}
     renderCraftGrid(category);updateCursorStackUI();scheduleSaveGame();
 }
@@ -318,9 +318,10 @@ function craftFromGrid(category,shiftCraft) {
 }
 
 function returnCraftGrid(category) {
-    const config=getCraftGridConfig(category);
-    for(let i=0;i<config.grid.length;i++){const slot=config.grid[i];if(!slot)continue;if(!addItem(slot.id,slot.count))spawnItemDrop(slot.id,slot.count,game.player.x,game.player.y+1,game.player.z);config.grid[i]=null;}
+    const config=getCraftGridConfig(category);let complete=true;
+    for(let i=0;i<config.grid.length;i++){const slot=config.grid[i];if(!slot)continue;if(addItemStack(slot)||spawnItemDrop(slot.id,slot.count,game.player.x,game.player.y+1,game.player.z,undefined,slot))config.grid[i]=null;else complete=false;}
     renderCraftGrid(category);
+    return complete;
 }
 
 function autofillRecipe(category,recipe) {

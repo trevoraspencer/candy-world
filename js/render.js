@@ -115,14 +115,16 @@ function render(now) {
                 // fail and no block could ever be broken.
                 const brokenBlockId = game.targetBlock.block;
                 const heldTool=game.inventory[game.selectedSlot]?.id;
-                if(brokenBlockId===FURNACE)breakBlockEntity(game.targetBlock.x,game.targetBlock.y,game.targetBlock.z);
-                breakUtilityBlock(game.targetBlock.x,game.targetBlock.y,game.targetBlock.z,brokenBlockId);
-                if(isCropBlock(brokenBlockId))harvestCrop(game.targetBlock.x,game.targetBlock.y,game.targetBlock.z,brokenBlockId,true);
-                setBlock(game.targetBlock.x, game.targetBlock.y, game.targetBlock.z, AIR);
-                if(!game.creativeMode) for(const drop of getBlockDrops(brokenBlockId,heldTool,game.targetBlock.x*31+game.targetBlock.y*17+game.targetBlock.z)) spawnItemDrop(drop.id,drop.count,game.targetBlock.x+.5,game.targetBlock.y+.7,game.targetBlock.z+.5,{x:game.targetBlock.nx*.7,y:1.5,z:game.targetBlock.nz*.7});
-                if(!game.creativeMode)damageHeldTool(1);
-                CandyEvents.emit('blockBroken', { blockId:brokenBlockId, position:game.targetBlock });
-                updateHotbar();
+                const contentsCommitted=brokenBlockId===FURNACE?breakBlockEntity(game.targetBlock.x,game.targetBlock.y,game.targetBlock.z):breakUtilityBlock(game.targetBlock.x,game.targetBlock.y,game.targetBlock.z,brokenBlockId);
+                if(contentsCommitted){
+                    if(brokenBlockId===FURNACE)breakUtilityBlock(game.targetBlock.x,game.targetBlock.y,game.targetBlock.z,brokenBlockId);
+                    if(isCropBlock(brokenBlockId))harvestCrop(game.targetBlock.x,game.targetBlock.y,game.targetBlock.z,brokenBlockId,true);
+                    setBlock(game.targetBlock.x, game.targetBlock.y, game.targetBlock.z, AIR);
+                    if(!game.creativeMode) for(const drop of getBlockDrops(brokenBlockId,heldTool,game.targetBlock.x*31+game.targetBlock.y*17+game.targetBlock.z)) spawnItemDrop(drop.id,drop.count,game.targetBlock.x+.5,game.targetBlock.y+.7,game.targetBlock.z+.5,{x:game.targetBlock.nx*.7,y:1.5,z:game.targetBlock.nz*.7});
+                    if(!game.creativeMode)damageHeldTool(1);
+                    CandyEvents.emit('blockBroken', { blockId:brokenBlockId, position:game.targetBlock });
+                    updateHotbar();
+                }
                 game.breakProgress = 0;
                 game.breakingBlock = null;
                 game.breakStage = -1;
