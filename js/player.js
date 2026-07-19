@@ -277,40 +277,29 @@ function initInventory() {
     if(game.worldMode === 'creative') { game.creativeMode=true; populateCreativeInventory(); game.flyMode=true; }
 }
 
-function addItem(id, count) {
-    if(!canAddItem(id, count)) return false;
+function addItemStack(stack) {
+    const returned=CandyCore.returnCursorStack(game.inventory,stack,getItemMaxStack);
+    if(!returned.ok)return false;
+    game.inventory=returned.slots;
+    if(typeof scheduleSaveGame === 'function')scheduleSaveGame();
+    if(typeof updateRecipeGuideUI === 'function')updateRecipeGuideUI();
+    return true;
+}
 
-    const maxStack = getItemMaxStack(id);
-    // Try to stack with existing (tools don't stack)
-    if (maxStack > 1) {
-        for(let i = 0; i < 36; i++) {
-            if(game.inventory[i] && game.inventory[i].id === id && game.inventory[i].count < maxStack) {
-                const space = maxStack - game.inventory[i].count;
-                const add = Math.min(count, space);
-                game.inventory[i].count += add;
-                count -= add;
-                if(count <= 0) {
-                    if(typeof scheduleSaveGame === 'function') scheduleSaveGame();
-                    if(typeof updateRecipeGuideUI === 'function') updateRecipeGuideUI();
-                    return true;
-                }
-            }
-        }
-    }
-    // Find empty slot
-    for(let i = 0; i < 36; i++) {
-        if(!game.inventory[i]) {
-            const add = Math.min(count, maxStack);
-            game.inventory[i] = { id, count: add };
-            count -= add;
-            if(count <= 0) {
-                if(typeof scheduleSaveGame === 'function') scheduleSaveGame();
-                if(typeof updateRecipeGuideUI === 'function') updateRecipeGuideUI();
-                return true;
-            }
-        }
-    }
-    return false; // unreachable given canAddItem above
+function addItem(id, count) {
+    return addItemStack({id,count});
+}
+
+function returnCursorStackToInventory() {
+    if(!game.cursorStack)return false;
+    const returned=CandyCore.commitCursorStack(game.inventory,game.cursorStack,getItemMaxStack,drop=>spawnItemDrop(drop.id,drop.count,game.player.x,game.player.y+1,game.player.z,undefined,drop));
+    game.inventory=returned.slots;
+    game.cursorStack=returned.cursor;
+    updateHotbar();
+    updateCursorStackUI();
+    if(!returned.ok)return false;
+    if(typeof scheduleSaveGame === 'function')scheduleSaveGame();
+    return true;
 }
 
 function canAddItem(id, count) {
@@ -581,7 +570,7 @@ function updateInventoryUI() {
                 if(!game.inventory[slotIdx]) {
                     game.inventory[slotIdx] = game.cursorStack;
                     game.cursorStack = null;
-                } else if(game.inventory[slotIdx].id === game.cursorStack.id) {
+                } else if(game.inventory[slotIdx].id === game.cursorStack.id && CandyCore.stackMetadataMatches(game.inventory[slotIdx],game.cursorStack)) {
                     const maxSt = getItemMaxStack(game.inventory[slotIdx].id);
                     const space = maxSt - game.inventory[slotIdx].count;
                     const add = Math.min(game.cursorStack.count, space);
@@ -601,8 +590,8 @@ function updateInventoryUI() {
             if(typeof scheduleSaveGame === 'function') scheduleSaveGame();
         });
         slot.addEventListener('mousedown',event=>{if(event.button===0&&game.cursorStack){inventoryDrag.active=true;inventoryDrag.indices.clear();inventoryDrag.indices.add(Number(slot.dataset.slot));event.preventDefault();}});slot.addEventListener('mouseenter',()=>{if(inventoryDrag.active)inventoryDrag.indices.add(Number(slot.dataset.slot));});
-        slot.addEventListener('contextmenu',event=>{event.preventDefault();const slotIdx=Number(slot.dataset.slot),held=game.inventory[slotIdx];if(!game.cursorStack&&held){const split=CandyCore.splitStack(held);game.cursorStack=split.cursor;game.inventory[slotIdx]=split.slot;}else if(game.cursorStack){if(!held){game.inventory[slotIdx]={id:game.cursorStack.id,count:1};game.cursorStack.count--;}else if(held.id===game.cursorStack.id&&held.count<getItemMaxStack(held.id)){held.count++;game.cursorStack.count--;}if(game.cursorStack.count<=0)game.cursorStack=null;}updateInventoryUI();updateHotbar();scheduleSaveGame();});
-        slot.addEventListener('dblclick',()=>{const held=game.inventory[i];if(!held)return;const max=getItemMaxStack(held.id);for(let j=0;j<game.inventory.length&&held.count<max;j++){if(j===i||!game.inventory[j]||game.inventory[j].id!==held.id)continue;const take=Math.min(max-held.count,game.inventory[j].count);held.count+=take;game.inventory[j].count-=take;if(game.inventory[j].count===0)game.inventory[j]=null;}updateInventoryUI();updateHotbar();scheduleSaveGame();});
+        slot.addEventListener('contextmenu',event=>{event.preventDefault();const slotIdx=Number(slot.dataset.slot),held=game.inventory[slotIdx];if(!game.cursorStack&&held){const split=CandyCore.splitStack(held);game.cursorStack=split.cursor;game.inventory[slotIdx]=split.slot;}else if(game.cursorStack){const placed=CandyCore.placeOneFromCursor(game.inventory,game.cursorStack,slotIdx,getItemMaxStack);game.inventory=placed.slots;game.cursorStack=placed.cursor;}updateInventoryUI();updateHotbar();scheduleSaveGame();});
+        slot.addEventListener('dblclick',()=>{const held=game.inventory[i];if(!held)return;const max=getItemMaxStack(held.id);for(let j=0;j<game.inventory.length&&held.count<max;j++){if(j===i||!game.inventory[j]||game.inventory[j].id!==held.id||!CandyCore.stackMetadataMatches(game.inventory[j],held))continue;const take=Math.min(max-held.count,game.inventory[j].count);held.count+=take;game.inventory[j].count-=take;if(game.inventory[j].count===0)game.inventory[j]=null;}updateInventoryUI();updateHotbar();scheduleSaveGame();});
         grid.appendChild(slot);
     }
     updateCursorStackUI();
@@ -701,12 +690,8 @@ function toggleInventory() {
         updateInventoryUI();
         updateCraftingUI();
     } else {
-        returnCraftGrid('crafting');
-        if(game.cursorStack) {
-            addItem(game.cursorStack.id, game.cursorStack.count);
-            game.cursorStack = null;
-            updateHotbar();
-        }
+        const gridReturned=returnCraftGrid('crafting'),cursorReturned=!game.cursorStack||returnCursorStackToInventory();
+        if(!gridReturned||!cursorReturned){game.inventoryOpen=true;overlay.style.display='flex';updateInventoryUI();updateCraftingUI();return;}
         updateCursorStackUI();
         // Try to deliver any pending quest rewards now that game.inventory may have space
         if(typeof tryGrantPendingRewards === 'function') tryGrantPendingRewards();
@@ -719,13 +704,12 @@ function toggleInventory() {
 function openCraftingTableUI(bx, by, bz) {
     // Close any other open UIs first
     if(game.inventoryOpen) {
-        returnCraftGrid('crafting');
+        if(!returnCraftGrid('crafting')||(game.cursorStack&&!returnCursorStackToInventory()))return false;
         game.inventoryOpen = false;
         document.getElementById('inventory-overlay').style.display = 'none';
-        if(game.cursorStack) { addItem(game.cursorStack.id, game.cursorStack.count); game.cursorStack = null; }
         updateCursorStackUI();
     }
-    if(game.furnaceOpen) closeFurnaceUI();
+    if(game.furnaceOpen&&!closeFurnaceUI())return false;
     if(game.tradeTarget) closeTradePanel();
     if(game.petPanelOpen) togglePetPanel();
     if(game.questPanelOpen) toggleQuestPanel();
@@ -736,28 +720,29 @@ function openCraftingTableUI(bx, by, bz) {
     else if(document.exitPointerLock) document.exitPointerLock();
     document.getElementById('crafting-table-overlay').style.display = 'flex';
     if(typeof updateCraftingTableUI === 'function') updateCraftingTableUI();
+    return true;
 }
 
 function closeCraftingTableUI() {
-    returnCraftGrid('table');
+    if(!returnCraftGrid('table')||(game.cursorStack&&!returnCursorStackToInventory()))return false;
     game.craftingTableOpen = false;
     game.craftingTablePos = null;
     document.getElementById('crafting-table-overlay').style.display = 'none';
     if(typeof requestGamePointerLock === 'function') requestGamePointerLock();
     else if(game.canvas.requestPointerLock) game.canvas.requestPointerLock();
+    return true;
 }
 
 // ====== FURNACE UI ======
 function openFurnaceUI(bx, by, bz) {
     // Close any other open UIs first
     if(game.inventoryOpen) {
-        returnCraftGrid('crafting');
+        if(!returnCraftGrid('crafting')||(game.cursorStack&&!returnCursorStackToInventory()))return false;
         game.inventoryOpen = false;
         document.getElementById('inventory-overlay').style.display = 'none';
-        if(game.cursorStack) { addItem(game.cursorStack.id, game.cursorStack.count); game.cursorStack = null; }
         updateCursorStackUI();
     }
-    if(game.craftingTableOpen) closeCraftingTableUI();
+    if(game.craftingTableOpen&&!closeCraftingTableUI())return false;
     if(game.tradeTarget) closeTradePanel();
     if(game.petPanelOpen) togglePetPanel();
     if(game.questPanelOpen) toggleQuestPanel();
@@ -770,16 +755,18 @@ function openFurnaceUI(bx, by, bz) {
     const ovenState=getOvenState(game.furnacePos,true);
     applyOvenOfflineProgress(game.furnacePos,ovenState);
     if(typeof updateFurnaceUI === 'function') updateFurnaceUI();
+    return true;
 }
 
 function closeFurnaceUI() {
-    if(game.cursorStack){if(!addItem(game.cursorStack.id,game.cursorStack.count))spawnItemDrop(game.cursorStack.id,game.cursorStack.count,game.player.x,game.player.y+1,game.player.z);game.cursorStack=null;}
+    if(game.cursorStack&&!returnCursorStackToInventory())return false;
     game.furnaceOpen = false;
     game.furnacePos = null;
     document.getElementById('furnace-overlay').style.display = 'none';
     updateCursorStackUI();
     if(typeof requestGamePointerLock === 'function') requestGamePointerLock();
     else if(game.canvas.requestPointerLock) game.canvas.requestPointerLock();
+    return true;
 }
 
 // Close button listeners for station UIs

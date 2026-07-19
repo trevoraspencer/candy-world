@@ -180,6 +180,48 @@ test('stack splitting and range transfers preserve exact item counts', () => {
 });
 
 test('inventory transactions preserve tool durability metadata',()=>{const slots=[{id:110,count:1,durability:17},null],clone=Core.cloneSlots(slots);assert.deepEqual(clone,slots);const moved=Core.transferStack(slots,0,[1],()=>1);assert.equal(moved.slots[1].durability,17);});
+test('right-clicking a damaged cursor tool into an empty slot preserves its metadata once',()=>{const tool={id:110,count:1,durability:17},result=Core.placeOneFromCursor([null],tool,0,()=>1);assert.deepEqual(result,{slots:[tool],cursor:null,moved:1});assert.deepEqual(tool,{id:110,count:1,durability:17});});
+test('right-click placement keeps normal one-item stack behavior',()=>{const result=Core.placeOneFromCursor([null],{id:4,count:3},0,()=>64);assert.deepEqual(result,{slots:[{id:4,count:1}],cursor:{id:4,count:2},moved:1});});
+test('closing inventory returns a damaged cursor tool with durability intact',()=>{const tool={id:110,count:1,durability:17},result=Core.returnCursorStack([null],tool,()=>1);assert.deepEqual(result,{ok:true,slots:[tool],drop:null,moved:1});assert.deepEqual(tool,{id:110,count:1,durability:17});});
+test('closing a chest returns the damaged cursor tool without duplication',()=>{const slots=Array(36).fill(null),tool={id:110,count:1,durability:9},result=Core.returnCursorStack(slots,tool,()=>1);assert.equal(result.ok,true);assert.deepEqual(result.slots[0],tool);assert.equal(result.slots.filter(Boolean).length,1);assert.equal(result.drop,null);});
+test('closing a furnace preserves the full damaged tool when it must be dropped',()=>{const full=Array.from({length:36},(_,id)=>({id,count:1})),tool={id:110,count:1,durability:5},result=Core.returnCursorStack(full,tool,()=>1);assert.deepEqual(result,{ok:false,slots:full,drop:tool,moved:0});assert.equal(result.slots.some(slot=>slot.id===tool.id),false);});
+test('cursor helpers never merge stacks with unequal durability metadata',()=>{
+    const destination=[{id:4,count:2,durability:10},null],cursor={id:4,count:1,durability:5};
+    const placed=Core.placeOneFromCursor(destination,cursor,0,()=>64);
+    assert.deepEqual(placed,{slots:destination,cursor,moved:0});
+    const returned=Core.returnCursorStack(destination,cursor,()=>64);
+    assert.deepEqual(returned,{ok:true,slots:[destination[0],cursor],drop:null,moved:1});
+    const blocked=Core.returnCursorStack([destination[0]],cursor,()=>64);
+    assert.deepEqual(blocked,{ok:false,slots:[destination[0]],drop:cursor,moved:0});
+});
+test('cursor commit retains the exact stack unless inventory or world accepts all of it',()=>{
+    const full=Array.from({length:36},(_,id)=>({id,count:64})),tool={id:110,count:1,durability:5};
+    const refused=Core.commitCursorStack(full,tool,()=>1,()=>false);
+    assert.deepEqual(refused,{ok:false,slots:full,cursor:tool,moved:0,location:null});
+    let committed=null;
+    const dropped=Core.commitCursorStack(full,tool,()=>1,stack=>{committed=stack;return true;});
+    assert.deepEqual(dropped,{ok:true,slots:full,cursor:null,moved:1,location:'world'});
+    assert.deepEqual(committed,tool);
+});
+test('randomized cursor operations conserve counts and match legacy ordinary stacking',()=>{
+    const random=Core.createRng('cursor-conservation'),max=()=>4;
+    const clone=slots=>slots.map(slot=>slot?{...slot}:null);
+    const legacy=(slots,cursor)=>{
+        const original=clone(slots),next=clone(slots);let remaining=cursor.count;
+        for(const slot of next){if(!slot||slot.id!==cursor.id||slot.count>=4)continue;const moved=Math.min(remaining,4-slot.count);slot.count+=moved;remaining-=moved;if(!remaining)break;}
+        for(let i=0;i<next.length&&remaining;i++)if(!next[i]){const moved=Math.min(remaining,4);next[i]={id:cursor.id,count:moved};remaining-=moved;}
+        return remaining?{ok:false,slots:original}:{ok:true,slots:next};
+    };
+    const total=(slots,id)=>slots.reduce((sum,slot)=>sum+(slot?.id===id?slot.count:0),0);
+    for(let iteration=0;iteration<2000;iteration++){
+        const slots=Array.from({length:1+Math.floor(random()*12)},()=>random()<.35?null:{id:1+Math.floor(random()*4),count:1+Math.floor(random()*4)});
+        const cursor={id:1+Math.floor(random()*4),count:1+Math.floor(random()*9)},expected=legacy(slots,cursor),actual=Core.returnCursorStack(slots,cursor,max);
+        assert.equal(actual.ok,expected.ok);assert.deepEqual(actual.slots,expected.slots);
+        assert.equal(total(actual.slots,cursor.id)+(actual.drop?.count||0),total(slots,cursor.id)+cursor.count);
+        const index=Math.floor(random()*slots.length),placed=Core.placeOneFromCursor(slots,cursor,index,max);
+        assert.equal(total(placed.slots,cursor.id)+(placed.cursor?.count||0),total(slots,cursor.id)+cursor.count);
+    }
+});
 test('cross-container shift transfer is atomic and preserves overflow',()=>{const source=[{id:4,count:10}],destination=[{id:4,count:60},null],moved=Core.transferBetween(source,destination,0,()=>64);assert.equal(moved.moved,10);assert.deepEqual(moved.source,[null]);assert.deepEqual(moved.destination,[{id:4,count:64},{id:4,count:6}]);const full=Core.transferBetween(source,[{id:3,count:64}],0,()=>64);assert.equal(full.ok,false);assert.deepEqual(full.source,source);});
 test('motion substeps never exceed a quarter block during a hitch',()=>{const motion=Core.computeMotionSubsteps(1.35,-10,0,.25);assert.equal(motion.steps,40);assert.ok(Math.abs(motion.dx)<=.25&&Math.abs(motion.dy)<=.25);assert.equal(motion.dy*motion.steps,-10);});
 test('drag distribution conserves counts and skips incompatible slots',()=>{const result=Core.distributeStack([null,{id:2,count:2},{id:3,count:4}],{id:2,count:7},[0,1,2,0],()=>4);assert.deepEqual(result.slots,[{id:2,count:4},{id:2,count:4},{id:3,count:4}]);assert.deepEqual(result.cursor,{id:2,count:1});assert.equal(result.moved,6);});

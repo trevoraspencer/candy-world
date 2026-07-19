@@ -115,6 +115,12 @@ function sanitizeInventorySlot(slot) {
     const clean={ id: slot.id, count: Math.min(slot.count, maxStack) };if(typeof isToolItem==='function'&&isToolItem(slot.id)){const max=getToolMaxDurability(slot.id);clean.durability=clampNumber(Number(slot.durability)||max,1,max);}return clean;
 }
 
+function sanitizeItemDrop(drop) {
+    if(!isSaveObject(drop)||!Number.isFinite(drop.x)||!Number.isFinite(drop.y)||!Number.isFinite(drop.z))return null;
+    const item=sanitizeInventorySlot(drop);if(!item)return null;
+    return {...item,x:clampNumber(drop.x,.5,WORLD_W-.5),y:clampNumber(drop.y,0,CHUNK_H-1),z:clampNumber(drop.z,.5,WORLD_D-.5),vx:0,vy:0,vz:0,age:Math.max(.4,Number(drop.age)||.4),spin:Number(drop.spin)||0};
+}
+
 function sanitizePetName(name, type) {
     if(typeof name !== 'string') return MOB_NAMES[type] || 'Pet';
     const clean = name.trim().slice(0, 20);
@@ -351,7 +357,7 @@ function normalizeSave(save, diagnostics) {
     if(Array.isArray(migrated.blockStates)){clean.blockStates=[];for(const record of migrated.blockStates.slice(0,100000)){if(!Array.isArray(record)||record.length!==2||typeof record[0]!=='string'||!isSaveObject(record[1]))continue;const coords=record[0].split(',').map(Number);if(coords.length!==3||!isWorldBlockCoord(coords[0],coords[1],coords[2]))continue;const state=record[1];clean.blockStates.push([record[0],{facing:clampNumber(Math.floor(Number(state.facing)||0),0,3),open:!!state.open,text:typeof state.text==='string'?state.text.replace(/[<>]/g,'').slice(0,40):'',connections:clampNumber(Math.floor(Number(state.connections)||0),0,15),growth:clampNumber(Math.floor(Number(state.growth)||0),0,7),hydrated:!!state.hydrated,on:!!state.on,powered:!!state.powered,manualOn:state.manualOn!==false,delay:clampNumber(Math.floor(Number(state.delay)||4),1,20),pulseTick:Math.max(0,Math.floor(Number(state.pulseTick)||0)),pulseUntil:Math.max(0,Math.floor(Number(state.pulseUntil)||0)),note:clampNumber(Math.floor(Number(state.note)||0),0,7)}]);}}
     if(Array.isArray(migrated.itemDrops)) {
         clean.itemDrops=[];
-        for(const drop of migrated.itemDrops.slice(0,MAX_ITEM_DROPS))if(isSaveObject(drop)&&isValidItemId(drop.id)&&Number.isInteger(drop.count)&&drop.count>0&&Number.isFinite(drop.x)&&Number.isFinite(drop.y)&&Number.isFinite(drop.z))clean.itemDrops.push({id:drop.id,count:Math.min(drop.count,getItemMaxStack(drop.id)),x:clampNumber(drop.x,.5,WORLD_W-.5),y:clampNumber(drop.y,0,CHUNK_H-1),z:clampNumber(drop.z,.5,WORLD_D-.5),vx:0,vy:0,vz:0,age:Math.max(.4,Number(drop.age)||.4),spin:Number(drop.spin)||0});
+        for(const drop of migrated.itemDrops.slice(0,MAX_ITEM_DROPS)){const item=sanitizeItemDrop(drop);if(item)clean.itemDrops.push(item);}
     }
 
     const player = sanitizePlayerSave(migrated.player);
@@ -714,7 +720,7 @@ function serializeRecipeGuide() {
 }
 function serializeBlockEntities(){return Array.from(game.blockEntities.entries()).map(([key,state])=>state.type==='chest'?[key,{type:'chest',slots:state.slots.map(slot=>slot?{...slot}:null),structure:state.structure||'',opened:!!state.opened}]:[key,{type:state.type,input:state.input?{...state.input}:null,fuel:state.fuel?{...state.fuel}:null,output:state.output?{...state.output}:null,burnTime:state.burnTime||0,progress:state.progress||0,lit:!!state.lit,lastSimulationTime:state.lastSimulationTime||Date.now()}]);}
 function serializeBlockStates(){return Array.from(game.blockStates.entries()).map(([key,state])=>[key,{facing:state.facing||0,open:!!state.open,text:String(state.text||'').replace(/[<>]/g,'').slice(0,40),connections:state.connections||0,growth:state.growth||0,hydrated:!!state.hydrated,on:!!state.on,powered:!!state.powered,manualOn:state.manualOn!==false,delay:state.delay||4,pulseTick:state.pulseTick||0,pulseUntil:state.pulseUntil||0,note:state.note||0}]);}
-function serializeItemDrops(){return game.itemDrops.slice(0,MAX_ITEM_DROPS).map(drop=>({id:drop.id,count:drop.count,x:drop.x,y:drop.y,z:drop.z,age:drop.age,spin:drop.spin}));}
+function serializeItemDrops(){return game.itemDrops.slice(0,MAX_ITEM_DROPS).map(drop=>Object.assign({id:drop.id,count:drop.count,x:drop.x,y:drop.y,z:drop.z,age:drop.age,spin:drop.spin},Number.isFinite(drop.durability)?{durability:drop.durability}:{}));}
 
 function buildSaveData() {
     return {

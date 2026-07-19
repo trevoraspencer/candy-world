@@ -155,7 +155,7 @@ function damagePlayer(amount,source) {
 
 function killPlayer(source) {
     if(game.combat.dead)return;game.combat.dead=true;game.paused=true;clearInputState();document.exitPointerLock?.();
-    if(game.worldMode==='survival')for(let i=0;i<game.inventory.length;i++){const slot=game.inventory[i];if(slot){spawnItemDrop(slot.id,slot.count,game.player.x,game.player.y+1,game.player.z,{x:(hash2D(i,1)-.5)*3,y:2,z:(hash2D(i,2)-.5)*3});game.inventory[i]=null;}}
+    if(game.worldMode==='survival')for(let i=0;i<game.inventory.length;i++){const slot=game.inventory[i];if(slot&&spawnItemDrop(slot.id,slot.count,game.player.x,game.player.y+1,game.player.z,{x:(hash2D(i,1)-.5)*3,y:2,z:(hash2D(i,2)-.5)*3},slot))game.inventory[i]=null;}
     updateHotbar();setMetaVisible('respawn-overlay',true);document.getElementById('respawn-button').focus();
 }
 

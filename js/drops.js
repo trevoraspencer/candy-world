@@ -4,18 +4,32 @@ const MAX_ITEM_DROPS=192;
 let dropVAO=null,dropVBO=null;
 const dropVerts=new Float32Array(18);
 
-function spawnItemDrop(id,count,x,y,z,velocity) {
-    if(!Number.isInteger(id)||count<=0)return;
+function spawnItemDrop(id,count,x,y,z,velocity,stack) {
+    if(!Number.isInteger(id)||count<=0)return false;
+    const durability=Number.isFinite(stack?.durability)?stack.durability:null;
+    const candidate=durability===null?{id,count}:{id,count,durability};
+    const max=getItemMaxStack(id);
     for(const drop of game.itemDrops) {
         const dx=drop.x-x,dy=drop.y-y,dz=drop.z-z;
-        if(drop.id===id&&dx*dx+dy*dy+dz*dz<2.25&&drop.count+count<=getItemMaxStack(id)){drop.count+=count;return;}
+        if(drop.id===id&&CandyCore.stackMetadataMatches(drop,candidate)&&dx*dx+dy*dy+dz*dz<2.25&&drop.count+count<=max){drop.count+=count;return true;}
     }
     if(game.itemDrops.length>=MAX_ITEM_DROPS) {
-        const same=game.itemDrops.find(drop=>drop.id===id);
-        if(same){same.count+=count;return;}
-        return;
+        const compatible=game.itemDrops.filter(drop=>drop.id===id&&CandyCore.stackMetadataMatches(drop,candidate)&&drop.count<max);
+        if(compatible.reduce((capacity,drop)=>capacity+max-drop.count,0)<count)return false;
+        let remaining=count;
+        for(const drop of compatible){const moved=Math.min(remaining,max-drop.count);drop.count+=moved;remaining-=moved;if(!remaining)break;}
+        return remaining===0;
     }
-    game.itemDrops.push({id,count,x,y,z,vx:velocity?.x||0,vy:velocity?.y||1.5,vz:velocity?.z||0,age:0,spin:hash2D(x*31+id,z*47)*Math.PI*2});
+    game.itemDrops.push(Object.assign({id,count,x,y,z,vx:velocity?.x||0,vy:velocity?.y||1.5,vz:velocity?.z||0,age:0,spin:hash2D(x*31+id,z*47)*Math.PI*2},durability===null?{}:{durability}));
+    return true;
+}
+
+function commitItemDropStacks(stacks,x,y,z,velocity) {
+    const snapshot=game.itemDrops.map(drop=>({...drop}));
+    for(const stack of stacks||[])if(stack&&!spawnItemDrop(stack.id,stack.count,x,y,z,velocity,stack)){
+        game.itemDrops.length=0;game.itemDrops.push(...snapshot);return false;
+    }
+    return true;
 }
 
 function updateItemDrops(dt) {
@@ -29,10 +43,10 @@ function updateItemDrops(dt) {
         } else drop.vy-=12*dt;
         const nx=drop.x+drop.vx*dt,ny=drop.y+drop.vy*dt,nz=drop.z+drop.vz*dt;
         if(!isSolid(getBlock(Math.floor(nx),Math.floor(ny),Math.floor(nz)))){drop.x=nx;drop.y=ny;drop.z=nz;}else{drop.vx*=.45;drop.vz*=.45;drop.vy=Math.max(0,drop.vy)*.15;}
-        if(drop.age>.35&&distance<.9&&addItem(drop.id,drop.count)){CandyEvents.emit('itemPickedUp',{itemId:drop.id,count:drop.count});game.itemDrops.splice(i,1);continue;}
+        if(drop.age>.35&&distance<.9&&addItemStack(drop)){CandyEvents.emit('itemPickedUp',{itemId:drop.id,count:drop.count});game.itemDrops.splice(i,1);continue;}
         if(drop.age>300||drop.y<0)game.itemDrops.splice(i,1);
     }
-    for(let i=0;i<game.itemDrops.length;i++)for(let j=game.itemDrops.length-1;j>i;j--){const a=game.itemDrops[i],b=game.itemDrops[j];const dx=a.x-b.x,dy=a.y-b.y,dz=a.z-b.z;if(a.id===b.id&&a.count+b.count<=getItemMaxStack(a.id)&&dx*dx+dy*dy+dz*dz<1){a.count+=b.count;game.itemDrops.splice(j,1);}}
+    for(let i=0;i<game.itemDrops.length;i++)for(let j=game.itemDrops.length-1;j>i;j--){const a=game.itemDrops[i],b=game.itemDrops[j];const dx=a.x-b.x,dy=a.y-b.y,dz=a.z-b.z;if(a.id===b.id&&CandyCore.stackMetadataMatches(a,b)&&a.count+b.count<=getItemMaxStack(a.id)&&dx*dx+dy*dy+dz*dz<1){a.count+=b.count;game.itemDrops.splice(j,1);}}
 }
 
 function renderItemDrops(vp) {
