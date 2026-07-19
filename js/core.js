@@ -271,6 +271,24 @@
     function computeMotionSubsteps(dx,dy,dz,maxDistance){const limit=Math.max(.01,Number(maxDistance)||.25),steps=Math.max(1,Math.ceil(Math.max(Math.abs(dx||0),Math.abs(dy||0),Math.abs(dz||0))/limit));return{steps,dx:(dx||0)/steps,dy:(dy||0)/steps,dz:(dz||0)/steps};}
     function distributeStack(slots,cursor,indices,getMaxStack){const next=cloneSlots(slots),held=cursor&&Number.isInteger(cursor.id)&&cursor.count>0?{...cursor}:null;if(!held)return{slots:next,cursor:null,moved:0};const unique=[...new Set(indices||[])].filter(index=>Number.isInteger(index)&&index>=0&&index<next.length),max=Math.max(1,(getMaxStack||(()=>64))(held.id)||1);let moved=0,progress=true;while(held.count>0&&progress){progress=false;for(const index of unique){const slot=next[index];if(slot&&slot.id!==held.id||slot&&slot.count>=max)continue;if(slot)slot.count++;else next[index]=Object.assign({id:held.id,count:1},Number.isFinite(held.durability)?{durability:held.durability}:{});held.count--;moved++;progress=true;if(!held.count)break;}}return{slots:next,cursor:held.count?held:null,moved};}
     function isCurrentSaveGeneration(captured,current){return Number.isInteger(captured)&&captured===current;}
+    async function writeToDurableBackends(writeLocalStorage,writeIndexedDb) {
+        const result={ok:false,localStorage:false,indexedDb:false,localStorageError:null,indexedDbError:null};
+        try {
+            if(typeof writeLocalStorage!=='function')throw new TypeError('Local storage writer is required');
+            writeLocalStorage();
+            result.localStorage=true;
+        } catch(error) {
+            result.localStorageError=error;
+        }
+        try {
+            if(typeof writeIndexedDb!=='function')throw new TypeError('IndexedDB writer is required');
+            result.indexedDb=(await writeIndexedDb())===true;
+        } catch(error) {
+            result.indexedDbError=error;
+        }
+        result.ok=result.localStorage||result.indexedDb;
+        return result;
+    }
     function groupBlockEdits(edits,chunkDepth){const grouped=new Map(),depth=Math.max(1,chunkDepth|0);for(const [key,id] of edits||[]){const parts=String(key).split(','),x=Number(parts[0]),z=Number(parts[2]);if(!Number.isInteger(x)||!Number.isInteger(z))continue;const chunk=(x>>4)*depth+(z>>4);if(!grouped.has(chunk))grouped.set(chunk,new Map());grouped.get(chunk).set(key,id);}return grouped;}
     function computeStreamingConfig(viewDistance){const activeRadius=Math.max(2,Math.min(4,Math.round(Number(viewDistance)||4)-1)),prefetchRadius=activeRadius+4,maxLoaded=(activeRadius*2+9)**2+36;return{activeRadius,prefetchRadius,maxLoaded};}
     function shouldAdvanceCrop(seed,x,y,z,tick,hydrated,light,factor){if(!hydrated||Number(light)<=.45)return false;const roll=(mixSeed(seed,'crop',x,y,z,tick)>>>0)/4294967296;return roll<Math.min(.95,.22*Math.max(0,Number(factor)||1));}
@@ -301,6 +319,7 @@
         computeMotionSubsteps,
         distributeStack,
         isCurrentSaveGeneration,
+        writeToDurableBackends,
         groupBlockEdits,
         computeStreamingConfig,
         shouldAdvanceCrop

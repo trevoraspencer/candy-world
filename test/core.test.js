@@ -219,6 +219,27 @@ test('an older asynchronous checkpoint cannot clear a newer dirty generation',()
     assert.equal(Core.isCurrentSaveGeneration(4,5),false);
 });
 
+test('durable writes remain successful when IndexedDB is unavailable',async()=>{
+    let localWrites=0,idbWrites=0;
+    const result=await Core.writeToDurableBackends(()=>{localWrites++;},()=>{idbWrites++;return false;});
+    assert.equal(localWrites,1);assert.equal(idbWrites,1);
+    assert.deepEqual(result,{ok:true,localStorage:true,indexedDb:false,localStorageError:null,indexedDbError:null});
+});
+
+test('durable writes fall back to IndexedDB after a local storage failure',async()=>{
+    const localError=new Error('quota exceeded');
+    const result=await Core.writeToDurableBackends(()=>{throw localError;},async()=>true);
+    assert.equal(result.ok,true);assert.equal(result.localStorage,false);assert.equal(result.indexedDb,true);
+    assert.equal(result.localStorageError,localError);assert.equal(result.indexedDbError,null);
+});
+
+test('durable writes report failure when both backends fail',async()=>{
+    const localError=new Error('local write failed'),idbError=new Error('checkpoint failed');
+    const result=await Core.writeToDurableBackends(()=>{throw localError;},async()=>{throw idbError;});
+    assert.equal(result.ok,false);assert.equal(result.localStorage,false);assert.equal(result.indexedDb,false);
+    assert.equal(result.localStorageError,localError);assert.equal(result.indexedDbError,idbError);
+});
+
 test('one hundred thousand block edits serialize and round-trip exactly', () => {
     const edits=Array.from({length:100000},(_,i)=>[i%2048,1+Math.floor(i/4194304),(Math.floor(i/2048))%2048,(i%50)+1]);
     const encoded=JSON.stringify({version:4,blocks:edits}),decoded=JSON.parse(encoded);
