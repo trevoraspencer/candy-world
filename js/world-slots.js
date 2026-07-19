@@ -6,7 +6,12 @@ async function refreshWorldSlotSummary(){
     document.getElementById('save-summary').textContent=document.documentElement.dataset.saveRecovery==='previous-checkpoint'?'Recovered the previous complete checkpoint; your world is ready.':valid?'A valid Candy World save is ready in this slot.':'This world slot is empty.';
 }
 
-async function readActiveWorldRaw(){return localStorage.getItem(SAVE_KEY)||await CandyDB.read(SAVE_KEY);}
+async function readWorldRaw(key){
+    try{const local=localStorage.getItem(key);if(local)return local;}catch(error){console.warn('Local save read failed; trying checkpoint storage:',error);}
+    return await CandyDB.read(key);
+}
+
+async function readActiveWorldRaw(){return await readWorldRaw(SAVE_KEY);}
 
 function initializeWorldSlotPicker(){
     const picker=document.getElementById('world-slot');picker.value=ACTIVE_WORLD_SLOT;
@@ -18,15 +23,19 @@ function initializeWorldSlotPicker(){
         localStorage.removeItem(SAVE_KEY);localStorage.removeItem(SAVE_BACKUP_KEY);await CandyDB.remove(SAVE_KEY);refreshWorldSlotSummary();
     });
     document.getElementById('duplicate-world').addEventListener('click',async()=>{
-        const raw=await readActiveWorldRaw();if(!raw)return;
-        const current=Number(ACTIVE_WORLD_SLOT.slice(-1)),target='slot-'+(current%3+1),targetKey=saveKeyForSlot(target);
-        if((localStorage.getItem(targetKey)||await CandyDB.read(targetKey))&&!window.confirm('Replace World '+target.slice(-1)+' with this duplicate?'))return;
-        localStorage.setItem(targetKey,raw);await CandyDB.write(targetKey,raw);document.getElementById('save-summary').textContent='Duplicated into World '+target.slice(-1)+'.';
+        const status=document.getElementById('save-summary');
+        try{
+            const raw=await readActiveWorldRaw();if(!raw)return;
+            const current=Number(ACTIVE_WORLD_SLOT.slice(-1)),target='slot-'+(current%3+1),targetKey=saveKeyForSlot(target);
+            if(await readWorldRaw(targetKey)&&!window.confirm('Replace World '+target.slice(-1)+' with this duplicate?'))return;
+            const result=await writeSaveToDurableBackends(targetKey,raw);
+            status.textContent=result.ok?'Duplicated into World '+target.slice(-1)+'.':'Duplicate failed: no durable storage backend accepted the save.';
+        }catch(error){status.textContent='Duplicate failed: '+error.message;}
     });
     document.getElementById('export-world').addEventListener('click',async()=>{
         const raw=await readActiveWorldRaw();if(!raw)return;const blob=new Blob([raw],{type:'application/json'}),link=document.createElement('a');
         link.href=URL.createObjectURL(blob);link.download=(game.worldName||ACTIVE_WORLD_SLOT).replace(/[^a-z0-9_-]+/gi,'-')+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);
     });
     const input=document.getElementById('import-world-file');document.getElementById('import-world').addEventListener('click',()=>input.click());
-    input.addEventListener('change',async()=>{const file=input.files?.[0];if(!file)return;try{const raw=await file.text(),parsed=JSON.parse(raw),clean=normalizeSave(parsed,createSaveDiagnostics());if(!clean)throw new Error('Unsupported or unsafe save');const serialized=JSON.stringify(clean);localStorage.setItem(SAVE_KEY,serialized);await CandyDB.write(SAVE_KEY,serialized);refreshWorldSlotSummary();document.getElementById('save-summary').textContent='Imported world safely.';}catch(error){document.getElementById('save-summary').textContent='Import rejected: '+error.message;}finally{input.value='';}});
+    input.addEventListener('change',async()=>{const file=input.files?.[0];if(!file)return;try{const raw=await file.text(),parsed=JSON.parse(raw),clean=normalizeSave(parsed,createSaveDiagnostics());if(!clean)throw new Error('Unsupported or unsafe save');const serialized=JSON.stringify(clean),result=await writeSaveToDurableBackends(SAVE_KEY,serialized);if(!result.ok)throw new Error('No durable storage backend accepted the save');await refreshWorldSlotSummary();document.getElementById('save-summary').textContent='Imported world safely.';}catch(error){document.getElementById('save-summary').textContent='Import rejected: '+error.message;}finally{input.value='';}});
 }

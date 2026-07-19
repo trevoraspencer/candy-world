@@ -774,6 +774,13 @@ function ensureInitialSaveBackup(serialized) {
     }
 }
 
+function writeSaveToDurableBackends(key,serialized,localWrite) {
+    return CandyCore.writeToDurableBackends(
+        typeof localWrite==='function'?localWrite:()=>localStorage.setItem(key,serialized),
+        ()=>CandyDB.write(key,serialized)
+    );
+}
+
 function saveGameNow() {
     if(!game.worldLoaded) return;
     if(!saveDirty) return;
@@ -789,19 +796,22 @@ function saveGameNow() {
         return;
     }
 
-    try {
+    return writeSaveToDurableBackends(SAVE_KEY,serialized,()=>{
         backupPrimaryBeforeOverwrite();
-        localStorage.setItem(SAVE_KEY, serialized);
+        localStorage.setItem(SAVE_KEY,serialized);
         ensureInitialSaveBackup(serialized);
-        loadedSaveSource = 'primary';
-        if(CandyCore.isCurrentSaveGeneration(capturedVersion,saveDirtyVersion))saveDirty = false;
-        game.saveErrored = false; // clear the HUD warning once a save succeeds
-    } catch (err) {
-        console.warn('Failed to save game:', err);
-        saveDirty = true; // remain dirty so we retry next change
-        game.saveErrored = true;
-    }
-    CandyDB.write(SAVE_KEY,serialized).then(()=>{if(CandyCore.isCurrentSaveGeneration(capturedVersion,saveDirtyVersion)){saveDirty=false;game.saveErrored=false;}}).catch(err=>{console.warn('Checkpoint save failed:',err);if(CandyCore.isCurrentSaveGeneration(capturedVersion,saveDirtyVersion)&&!localStorage.getItem(SAVE_KEY)){saveDirty=true;game.saveErrored=true;}});
+    }).then(result=>{
+        if(result.localStorageError)console.warn('Failed to save game to local storage:',result.localStorageError);
+        if(result.indexedDbError)console.warn('Checkpoint save failed:',result.indexedDbError);
+        else if(!result.indexedDb&&!result.localStorage)console.warn('Checkpoint storage is unavailable.');
+        if(result.localStorage)loadedSaveSource='primary';
+        else if(result.indexedDb)loadedSaveSource='indexeddb';
+        if(CandyCore.isCurrentSaveGeneration(capturedVersion,saveDirtyVersion)){
+            saveDirty=!result.ok;
+            game.saveErrored=!result.ok;
+        }
+        return result;
+    });
 }
 
 function scheduleSaveGame() {
